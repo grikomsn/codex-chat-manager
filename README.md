@@ -1,8 +1,8 @@
 # codex-chat-manager
 
-CLI and TUI for managing local OpenAI Codex chat sessions.
+CLI, TUI, and Raycast extension for managing local OpenAI Codex chat sessions.
 
-The app reads Codex rollout files directly from disk and treats them as the source of truth. It supports active and archived sessions, parent/subagent grouping, transcript preview, archive/unarchive, resume, and bulk delete.
+The app reads Codex rollout files directly from disk and treats them as the source of truth. It supports active and archived sessions, parent/subagent grouping, transcript preview, archive/unarchive, resume, bulk delete, and a Raycast browser that reuses the CLI JSON output for discovery and mutations.
 
 ## Install
 
@@ -67,6 +67,28 @@ codex-chat-manager sessions resume --id SESSION_ID
 
 The app can operate on a copied Codex home if you want to inspect or test against a safe fixture instead of your live `~/.codex`.
 
+## Raycast Extension
+
+This repo also ships a standalone Raycast workspace in [`raycast`](./raycast).
+
+The extension is intentionally layered on top of the existing Go app:
+
+- it uses `codex-chat-manager sessions list --json` for discovery
+- it uses `codex-chat-manager sessions archive|unarchive|delete --json` for mutations
+- it parses rollout JSONL files locally for transcript preview
+- it does not change CLI or TUI storage semantics
+
+Current Raycast commands:
+
+- `Conversations`
+- `Active Conversations`
+- `Archived Conversations`
+
+Raycast preferences:
+
+- `managerBinaryPath`: optional override for the `codex-chat-manager` binary
+- `codexHome`: optional override for `CODEX_HOME`
+
 ## Why
 
 Codex stores valuable local session history, but the built-in storage is file-oriented and not optimized for bulk management. This project provides a focused local manager for browsing, previewing, grouping subagent threads, and performing safe archive or delete workflows on top of the rollout files Codex already writes.
@@ -75,6 +97,7 @@ Codex stores valuable local session history, but the built-in storage is file-or
 
 - A local Codex installation that writes session files under `CODEX_HOME`
 - A session tree that matches current Codex rollout conventions such as `sessions/YYYY/MM/DD/rollout-...jsonl` and `archived_sessions/rollout-...jsonl`
+- For Raycast development: Node `24.13.0` and npm `11.12.0` or newer, plus a local Raycast installation on macOS
 
 ## Storage Model
 
@@ -145,6 +168,14 @@ If you prefer `go install`, you can still build from source that way as well:
 go install github.com/grikomsn/codex-chat-manager/cmd/codex-chat-manager@latest
 ```
 
+Build the Raycast extension workspace:
+
+```bash
+cd raycast
+npm install
+npm run build
+```
+
 ## Tests
 
 Run the checks used during implementation:
@@ -154,6 +185,15 @@ make verify
 ```
 
 For development helpers and command shortcuts, see [`Makefile`](./Makefile).
+
+For the Raycast workspace:
+
+```bash
+cd raycast
+npm test
+npm run lint
+npm run build
+```
 
 ## License
 

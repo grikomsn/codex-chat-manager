@@ -6,7 +6,7 @@ Security fixes are applied on a best-effort basis to the latest main branch stat
 
 ## Reporting a Vulnerability
 
-Do not file public issues for vulnerabilities that could expose local session data or unsafe filesystem behavior.
+Do not file public issues for vulnerabilities that could expose local session data, unsafe filesystem behavior, or unintended Raycast extension access to Codex data.
 
 Please report them privately through the repository hosting platform's security reporting.
 
@@ -20,3 +20,4 @@ Include:
 - reproduction steps
 - expected impact
 - whether the issue requires a real Codex session tree or a synthetic fixture
+- whether the issue is in the Go CLI/TUI or the Raycast workspace
