@@ -1,0 +1,5 @@
+.DS_Store
+.agents/
+bin/
+codex-chat-manager
+skills-lock.json
