@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,12 +13,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/grikomsn/codex-chat-manager/internal/session"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 const (
@@ -44,7 +42,6 @@ const (
 	modeListNarrow
 	modePreview
 	modeGroupDetail
-	modeConfirm
 	modeFilter
 )
 
@@ -76,9 +73,9 @@ func newKeyMap() keyMap {
 		Status:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "status")),
 		Enter:   key.NewBinding(key.WithKeys("enter", "l", "right"), key.WithHelp("enter", "open")),
 		Back:    key.NewBinding(key.WithKeys("esc", "h", "left"), key.WithHelp("esc", "back")),
-		Archive: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "archive")),
-		Unarch:  key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "unarchive")),
-		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Archive: key.NewBinding(key.WithKeys("a"), key.WithHelp("a a", "archive")),
+		Unarch:  key.NewBinding(key.WithKeys("u"), key.WithHelp("u u", "unarchive")),
+		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d d", "delete")),
 		Resume:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "resume")),
 		Refresh: key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "refresh")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -111,16 +108,14 @@ func (i item) FilterValue() string {
 	return strings.Join([]string{i.group.Parent.ID, i.group.Parent.DisplayTitle(), i.group.Parent.CWD}, " ")
 }
 
-type confirmResultMsg struct {
-	confirmed bool
-}
-
-type confirmDoneMsg struct{}
-
 type clearErrorMsg struct{}
 
 type errorMsg struct {
 	message string
+}
+
+type doubleTapExpiredMsg struct {
+	nonce int
 }
 
 type box struct {
@@ -175,10 +170,10 @@ type model struct {
 	current          *session.SessionGroup
 	currentDoc       session.PreviewDocument
 	errorMsg         string
-	confirmForm      *huh.Form
-	confirmAct       session.ActionType
-	confirmIDs       []string
-	confirmTitle     string
+	armedAct         session.ActionType
+	armedIDs         []string
+	armedUntil       time.Time
+	armedNonce       int
 	sized            bool
 	showSystem       bool
 	dragTarget       scrollDragTarget
@@ -239,6 +234,10 @@ var (
 
 // Run starts the interactive session manager.
 func Run(cfg session.Config, stdout, stderr io.Writer) error {
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer slog.SetDefault(prevLogger)
+
 	m, err := initialModel(cfg)
 	if err != nil {
 		return err
@@ -324,8 +323,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMsg:
-		if cmd, handled := m.handleMouse(msg); handled {
+		cmd, handled := m.handleMouse(msg)
+		if handled {
+			m.disarmDoubleTap()
 			return m, cmd
+		}
+		return m, nil
+	case doubleTapExpiredMsg:
+		if m.armedAct != "" && msg.nonce == m.armedNonce {
+			m.disarmDoubleTap()
 		}
 		return m, nil
 	case clearErrorMsg:
@@ -333,13 +339,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Quit) {
+			m.disarmDoubleTap()
 			return m, tea.Quit
 		}
 		if key.Matches(msg, m.keys.Help) {
+			m.disarmDoubleTap()
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Refresh) {
+			m.disarmDoubleTap()
 			m.clearError()
 			if err := m.refresh(); err != nil {
 				return m, m.setError(err.Error())
@@ -347,6 +356,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.System) {
+			m.disarmDoubleTap()
 			m.clearError()
 			m.showSystem = !m.showSystem
 			m.syncPreviewPreserveOffset()
@@ -361,8 +371,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePreview(msg)
 	case modeGroupDetail:
 		return m.updateGroupDetail(msg)
-	case modeConfirm:
-		return m.updateConfirm(msg)
 	case modeFilter:
 		return m.updateFilter(msg)
 	default:
@@ -370,8 +378,125 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m *model) disarmDoubleTap() {
+	m.armedAct = ""
+	m.armedIDs = nil
+	m.armedUntil = time.Time{}
+	m.restoreDoubleTapHelp()
+}
+
+func (m *model) restoreDoubleTapHelp() {
+	m.keys.Archive.SetHelp("a a", "archive")
+	m.keys.Unarch.SetHelp("u u", "unarchive")
+	m.keys.Delete.SetHelp("d d", "delete")
+}
+
+func (m *model) armDoubleTap(action session.ActionType, requestedIDs []string, resolvedCount int) tea.Cmd {
+	m.armedAct = action
+	m.armedIDs = requestedIDs
+	m.armedUntil = time.Now().Add(2 * time.Second)
+	m.armedNonce++
+	nonce := m.armedNonce
+
+	switch action {
+	case session.ActionArchive:
+		m.keys.Archive.SetHelp("a", fmt.Sprintf("confirm archive (%d)", resolvedCount))
+	case session.ActionUnarchive:
+		m.keys.Unarch.SetHelp("u", fmt.Sprintf("confirm unarchive (%d)", resolvedCount))
+	case session.ActionDelete:
+		m.keys.Delete.SetHelp("d", fmt.Sprintf("confirm delete (%d)", resolvedCount))
+	}
+
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+		return doubleTapExpiredMsg{nonce: nonce}
+	})
+}
+
+func (m *model) prepareDoubleTap(action session.ActionType) ([]string, int, error) {
+	requestedIDs := m.selectedIDs()
+	if len(requestedIDs) == 0 {
+		if group := m.selectedGroup(); group != nil {
+			requestedIDs = append(requestedIDs, group.Parent.ID)
+		}
+	}
+	if len(requestedIDs) == 0 {
+		return nil, 0, nil
+	}
+
+	_, records, err := m.store.ResolveTargets(requestedIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(records) == 0 {
+		return nil, 0, nil
+	}
+	if action == session.ActionDelete {
+		var blockedIDs []string
+		for _, record := range records {
+			if record.Status != session.StatusArchived {
+				blockedIDs = append(blockedIDs, record.ID)
+			}
+		}
+		if len(blockedIDs) > 0 {
+			return nil, 0, fmt.Errorf("delete blocked by active sessions: %s", strings.Join(blockedIDs, ", "))
+		}
+	}
+	return requestedIDs, len(records), nil
+}
+
+func (m model) handleDoubleTap(action session.ActionType) (tea.Model, tea.Cmd) {
+	m.clearError()
+	if m.armedAct != "" && time.Now().After(m.armedUntil) {
+		m.disarmDoubleTap()
+	}
+	if m.armedAct == action && time.Now().Before(m.armedUntil) {
+		var err error
+		switch action {
+		case session.ActionArchive:
+			_, err = m.store.Archive(m.armedIDs)
+		case session.ActionUnarchive:
+			_, err = m.store.Unarchive(m.armedIDs)
+		case session.ActionDelete:
+			_, err = m.store.Delete(m.armedIDs)
+		}
+		m.disarmDoubleTap()
+		if err != nil {
+			return m, m.setError(err.Error())
+		}
+		m.selection = make(map[string]struct{})
+		if err := m.refresh(); err != nil {
+			return m, m.setError(err.Error())
+		}
+		return m, nil
+	}
+
+	requestedIDs, resolvedCount, err := m.prepareDoubleTap(action)
+	if err != nil {
+		m.disarmDoubleTap()
+		return m, m.setError(err.Error())
+	}
+	if len(requestedIDs) == 0 {
+		return m, nil
+	}
+	return m, m.armDoubleTap(action, requestedIDs, resolvedCount)
+}
+
 func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if m.armedAct != "" {
+			isConfirmTap := false
+			switch m.armedAct {
+			case session.ActionArchive:
+				isConfirmTap = key.Matches(keyMsg, m.keys.Archive)
+			case session.ActionUnarchive:
+				isConfirmTap = key.Matches(keyMsg, m.keys.Unarch)
+			case session.ActionDelete:
+				isConfirmTap = key.Matches(keyMsg, m.keys.Delete)
+			}
+			if !isConfirmTap {
+				m.disarmDoubleTap()
+			}
+		}
 		switch {
 		case key.Matches(keyMsg, m.keys.Filter):
 			m.clearError()
@@ -408,11 +533,11 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case key.Matches(keyMsg, m.keys.Archive):
-			return m.beginConfirm(session.ActionArchive)
+			return m.handleDoubleTap(session.ActionArchive)
 		case key.Matches(keyMsg, m.keys.Unarch):
-			return m.beginConfirm(session.ActionUnarchive)
+			return m.handleDoubleTap(session.ActionUnarchive)
 		case key.Matches(keyMsg, m.keys.Delete):
-			return m.beginConfirm(session.ActionDelete)
+			return m.handleDoubleTap(session.ActionDelete)
 		case key.Matches(keyMsg, m.keys.Resume):
 			m.clearError()
 			if group := m.selectedGroup(); group != nil {
@@ -487,35 +612,6 @@ func (m model) updateGroupDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case confirmDoneMsg:
-		m.setDefaultMode()
-		return m, nil
-	case confirmResultMsg:
-		if !msg.confirmed {
-			m.setDefaultMode()
-			return m, nil
-		}
-		if err := m.performConfirm(); err != nil {
-			return m, m.setError(err.Error())
-		}
-		m.setDefaultMode()
-		return m, nil
-	}
-	formModel := m.confirmForm
-	newForm, cmd := formModel.Update(msg)
-	typed, _ := newForm.(*huh.Form)
-	m.confirmForm = typed
-	if m.confirmForm.State == huh.StateCompleted {
-		return m, func() tea.Msg { return confirmResultMsg{confirmed: m.confirmForm.GetBool("confirm")} }
-	}
-	if m.confirmForm.State == huh.StateAborted {
-		return m, func() tea.Msg { return confirmDoneMsg{} }
-	}
-	return m, cmd
-}
-
 func (m model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Loading..."
@@ -536,9 +632,6 @@ func (m model) View() string {
 			body = lipgloss.JoinHorizontal(lipgloss.Top, m.renderChildPane(), m.renderPreviewPane())
 		}
 		parts = append(parts, body)
-	case modeConfirm:
-		parts = append(parts, m.confirmForm.View())
-		return strings.Join(parts, "\n")
 	case modeFilter:
 		parts = append(parts, m.renderMainView())
 		parts = append(parts, m.renderFilterInput())
@@ -672,108 +765,6 @@ func (m *model) selectedIDs() []string {
 	return ids
 }
 
-func (m model) beginConfirm(action session.ActionType) (tea.Model, tea.Cmd) {
-	m.clearError()
-	requestedIDs := m.selectedIDs()
-	if len(requestedIDs) == 0 {
-		if group := m.selectedGroup(); group != nil {
-			requestedIDs = append(requestedIDs, group.Parent.ID)
-		}
-	}
-	if len(requestedIDs) == 0 {
-		return m, nil
-	}
-
-	_, records, err := m.store.ResolveTargets(requestedIDs)
-	if err != nil {
-		return m, m.setError(err.Error())
-	}
-	if len(records) == 0 {
-		return m, nil
-	}
-	resolvedIDs := make([]string, 0, len(records))
-	for _, record := range records {
-		resolvedIDs = append(resolvedIDs, record.ID)
-	}
-
-	var willChange int
-	var willSkip int
-	var blockedIDs []string
-	for _, record := range records {
-		switch action {
-		case session.ActionArchive:
-			if record.IsArchived() {
-				willSkip++
-			} else {
-				willChange++
-			}
-		case session.ActionUnarchive:
-			if record.Status == session.StatusActive {
-				willSkip++
-			} else {
-				willChange++
-			}
-		case session.ActionDelete:
-			if record.Status != session.StatusArchived {
-				blockedIDs = append(blockedIDs, record.ID)
-				continue
-			}
-			willChange++
-		}
-	}
-	if action == session.ActionDelete && len(blockedIDs) > 0 {
-		return m, m.setError(fmt.Sprintf("delete blocked by active sessions: %s", strings.Join(blockedIDs, ", ")))
-	}
-
-	m.confirmAct = action
-	m.confirmIDs = requestedIDs
-	actionTitle := cases.Title(language.English).String(string(action))
-	var resolvedDisplay string
-	if len(resolvedIDs) <= 3 {
-		resolvedDisplay = strings.Join(resolvedIDs, ", ")
-	} else {
-		resolvedDisplay = fmt.Sprintf("%s and %d more", strings.Join(resolvedIDs[:3], ", "), len(resolvedIDs)-3)
-	}
-	header := fmt.Sprintf("%s %d session(s)?", actionTitle, len(resolvedIDs))
-	if len(resolvedIDs) != len(requestedIDs) {
-		header += fmt.Sprintf("\nSelected %d id(s) → %d session(s)", len(requestedIDs), len(resolvedIDs))
-	}
-	if willSkip > 0 {
-		header += fmt.Sprintf("\nWill change %d, skip %d", willChange, willSkip)
-	}
-	m.confirmTitle = fmt.Sprintf("%s\n%s", header, resolvedDisplay)
-	confirmed := false
-	m.confirmForm = huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Key("confirm").
-				Title(m.confirmTitle).
-				Affirmative("Yes").
-				Negative("No").
-				Value(&confirmed),
-		),
-	)
-	m.mode = modeConfirm
-	return m, nil
-}
-
-func (m *model) performConfirm() error {
-	var err error
-	switch m.confirmAct {
-	case session.ActionArchive:
-		_, err = m.store.Archive(m.confirmIDs)
-	case session.ActionUnarchive:
-		_, err = m.store.Unarchive(m.confirmIDs)
-	case session.ActionDelete:
-		_, err = m.store.Delete(m.confirmIDs)
-	}
-	if err != nil {
-		return err
-	}
-	m.selection = make(map[string]struct{})
-	return m.refresh()
-}
-
 func (m *model) refresh() error {
 	snapshot, err := m.store.LoadSnapshot()
 	if err != nil {
@@ -903,7 +894,7 @@ func (m model) renderFilterInput() string {
 }
 
 func (m *model) syncModeToSize() {
-	if m.mode == modeConfirm || m.mode == modeFilter {
+	if m.mode == modeFilter {
 		return
 	}
 	if m.isWide() {
@@ -954,7 +945,7 @@ func (m model) componentHeight(pane box) int {
 }
 
 func (m *model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
-	if m.mode == modeConfirm || m.width == 0 || m.height == 0 {
+	if m.width == 0 || m.height == 0 {
 		return nil, false
 	}
 

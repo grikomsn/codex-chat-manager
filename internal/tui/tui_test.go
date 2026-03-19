@@ -45,23 +45,7 @@ func TestInitialModelResizesNarrow(t *testing.T) {
 	}
 }
 
-func TestResizeKeepsConfirmMode(t *testing.T) {
-	t.Parallel()
-	cfg := makeTUIFixture(t)
-	m, err := initialModel(cfg)
-	if err != nil {
-		t.Fatalf("initialModel() error = %v", err)
-	}
-	m.mode = modeConfirm
-	m.width = 140
-	m.height = 40
-	m.resize()
-	if m.mode != modeConfirm {
-		t.Fatalf("expected confirm mode to survive resize, got %v", m.mode)
-	}
-}
-
-func TestConfirmCountsCascadeTargets(t *testing.T) {
+func TestDoubleTapArchiveArmsThenExecutesCascade(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithChildGroup(t)
 	m, err := initialModel(cfg)
@@ -72,16 +56,105 @@ func TestConfirmCountsCascadeTargets(t *testing.T) {
 	m.height = 30
 	m.resize()
 
-	updated, _ := m.beginConfirm(session.ActionArchive)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = updated.(model)
-	if m.mode != modeConfirm {
-		t.Fatalf("expected confirm mode, got %v", m.mode)
+
+	if m.armedAct != session.ActionArchive {
+		t.Fatalf("expected armed action archive, got %q", m.armedAct)
 	}
-	if m.confirmForm == nil {
-		t.Fatal("expected confirm form")
+	if got := m.keys.Archive.Help().Desc; !strings.Contains(got, "confirm archive (2)") {
+		t.Fatalf("expected archive help to include confirm label, got %q", got)
 	}
-	if got := m.confirmTitle; !strings.Contains(got, "Archive 2 session(s)?") {
-		t.Fatalf("expected confirm title to include cascade count, got %q", got)
+
+	snapshot, err := m.store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if got := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"].Status; got != session.StatusActive {
+		t.Fatalf("expected parent to remain active after first tap, got %q", got)
+	}
+	if got := snapshot.RecordsByID["22222222-2222-2222-2222-222222222222"].Status; got != session.StatusActive {
+		t.Fatalf("expected child to remain active after first tap, got %q", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(model)
+
+	if m.armedAct != "" {
+		t.Fatalf("expected double-tap to disarm after execution, got %q", m.armedAct)
+	}
+	if got := m.keys.Archive.Help().Key; got != "a a" {
+		t.Fatalf("expected archive help to restore default key, got %q", got)
+	}
+
+	snapshot, err = m.store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if got := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"].Status; got != session.StatusArchived {
+		t.Fatalf("expected parent to be archived after second tap, got %q", got)
+	}
+	if got := snapshot.RecordsByID["22222222-2222-2222-2222-222222222222"].Status; got != session.StatusArchived {
+		t.Fatalf("expected child to be archived after second tap, got %q", got)
+	}
+}
+
+func TestDoubleTapTimeoutClearsArming(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixture(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 100
+	m.height = 30
+	m.resize()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(model)
+	nonce := m.armedNonce
+
+	updated, _ = m.Update(doubleTapExpiredMsg{nonce: nonce})
+	m = updated.(model)
+
+	if m.armedAct != "" {
+		t.Fatalf("expected arming to clear on timeout, got %q", m.armedAct)
+	}
+	if got := m.keys.Archive.Help().Key; got != "a a" {
+		t.Fatalf("expected archive help to restore default key, got %q", got)
+	}
+
+	snapshot, err := m.store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if got := snapshot.RecordsByID["11111111-1111-1111-1111-000000000001"].Status; got != session.StatusActive {
+		t.Fatalf("expected session to remain active after timeout, got %q", got)
+	}
+}
+
+func TestDoubleTapDeleteBlockedDoesNotArm(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithChildGroup(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 100
+	m.height = 30
+	m.resize()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	if m.armedAct != "" {
+		t.Fatalf("expected delete to remain unarmed when blocked, got %q", m.armedAct)
+	}
+	if got := m.keys.Delete.Help().Key; got != "d d" {
+		t.Fatalf("expected delete help to keep default key, got %q", got)
+	}
+	if !strings.Contains(m.errorMsg, "delete blocked by active sessions") {
+		t.Fatalf("expected delete blocked error, got %q", m.errorMsg)
 	}
 }
 
