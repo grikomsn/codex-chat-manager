@@ -2,36 +2,39 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestRunSessionsListJSON(t *testing.T) {
-	t.Parallel()
+func TestSessionsListJSON(t *testing.T) {
 	root := t.TempDir()
 	makeSessionFixture(t, root, "11111111-1111-1111-1111-111111111111", "Test title")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	err := Run(context.Background(), []string{"sessions", "list", "--json", "--codex-home", root}, &stdout, &stderr)
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+	rootCmd.SetArgs([]string{"sessions", "list", "--json", "--codex-home", root})
+	err := rootCmd.Execute()
 	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("Execute() error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), `"id": "11111111-1111-1111-1111-111111111111"`) {
 		t.Fatalf("expected session id in output, got %s", stdout.String())
 	}
 }
 
-func TestRunDeleteRequiresYes(t *testing.T) {
-	t.Parallel()
+func TestDeleteRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	makeArchivedSessionFixture(t, root, "11111111-1111-1111-1111-111111111111")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	err := Run(context.Background(), []string{"sessions", "delete", "--id", "11111111-1111-1111-1111-111111111111", "--codex-home", root}, &stdout, &stderr)
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+	rootCmd.SetArgs([]string{"sessions", "delete", "--id", "11111111-1111-1111-1111-111111111111", "--codex-home", root})
+	err := rootCmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("expected --yes error, got %v", err)
 	}
@@ -43,7 +46,7 @@ func makeSessionFixture(t *testing.T, root, id, title string) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/tmp/app","source":"vscode"}}` + "\n" +
+	body := `{"type":"session-meta","payload":{"id":"` + id + `","cwd":"/tmp/app","source":"vscode"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"` + title + `"}}` + "\n"
 	if err := os.WriteFile(filepath.Join(path, "rollout-2026-03-19T10-42-03-"+id+".jsonl"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,7 +59,7 @@ func makeArchivedSessionFixture(t *testing.T, root, id string) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/tmp/app","source":"vscode"}}` + "\n"
+	body := `{"type":"session-meta","payload":{"id":"` + id + `","cwd":"/tmp/app","source":"vscode"}}` + "\n"
 	if err := os.WriteFile(filepath.Join(path, "rollout-2026-03-19T10-42-03-"+id+".jsonl"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
