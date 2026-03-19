@@ -74,11 +74,11 @@ func parsePreview(record SessionRecord) (PreviewDocument, error) {
 			continue
 		}
 		switch env.Type {
-		case "event_msg":
+		case RecordTypeEventMsg:
 			if block := eventBlock(env.Payload); block != nil {
 				doc.Blocks = append(doc.Blocks, *block)
 			}
-		case "response_item":
+		case RecordTypeResponseItem:
 			if blocks := responseBlocks(env.Payload); len(blocks) > 0 {
 				doc.Blocks = append(doc.Blocks, blocks...)
 			}

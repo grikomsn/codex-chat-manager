@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	EnvCodexHome           = "CODEX_HOME"
 	sessionsSubdir         = "sessions"
 	archivedSessionsSubdir = "archived_sessions"
 	sessionIndexName       = "session_index.jsonl"
@@ -26,7 +27,7 @@ type Config struct {
 func ResolveConfig(override string) (Config, error) {
 	root := override
 	if root == "" {
-		root = os.Getenv("CODEX_HOME")
+		root = os.Getenv(EnvCodexHome)
 	}
 	if root == "" {
 		home, err := os.UserHomeDir()
