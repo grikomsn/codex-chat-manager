@@ -32,7 +32,7 @@ func NewPreviewCache() *PreviewCache {
 func (c *PreviewCache) Load(record SessionRecord) (PreviewDocument, error) {
 	stat, err := os.Stat(record.Path)
 	if err != nil {
-		return PreviewDocument{}, fmt.Errorf("stat preview path: %w", err)
+		return PreviewDocument{}, fmt.Errorf("stat preview %s: %w", record.Path, err)
 	}
 	key := record.Path
 	modTime := stat.ModTime().UnixNano()
@@ -46,7 +46,7 @@ func (c *PreviewCache) Load(record SessionRecord) (PreviewDocument, error) {
 
 	doc, err := parsePreview(record)
 	if err != nil {
-		return PreviewDocument{}, err
+		return PreviewDocument{}, fmt.Errorf("parse preview %s: %w", record.Path, err)
 	}
 
 	c.mu.Lock()
@@ -58,7 +58,7 @@ func (c *PreviewCache) Load(record SessionRecord) (PreviewDocument, error) {
 func parsePreview(record SessionRecord) (PreviewDocument, error) {
 	file, err := os.Open(record.Path)
 	if err != nil {
-		return PreviewDocument{}, fmt.Errorf("open preview path: %w", err)
+		return PreviewDocument{}, fmt.Errorf("open preview %s: %w", record.Path, err)
 	}
 	defer file.Close()
 
@@ -85,7 +85,7 @@ func parsePreview(record SessionRecord) (PreviewDocument, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return PreviewDocument{}, fmt.Errorf("scan preview path: %w", err)
+		return PreviewDocument{}, fmt.Errorf("scan preview %s: %w", record.Path, err)
 	}
 	if len(doc.Blocks) == 0 {
 		doc.Blocks = append(doc.Blocks, PreviewBlock{

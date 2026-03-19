@@ -55,7 +55,10 @@ export async function parsePreviewFromFile(
     let envelope: RecordEnvelope;
     try {
       envelope = JSON.parse(trimmed) as RecordEnvelope;
-    } catch {
+    } catch (error) {
+      if (process.env.DEBUG_PREVIEW) {
+        console.error(`[preview] Skipping malformed line in ${record.path}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       continue;
     }
 

@@ -24,8 +24,9 @@ export function parseManagerJSON<T>(stdout: string): T {
   try {
     return JSON.parse(stdout) as T;
   } catch (error) {
+    const snippet = stdout.slice(0, 200);
     throw new Error(
-      `Failed to parse codex-chat-manager JSON output: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to parse codex-chat-manager JSON output: ${error instanceof Error ? error.message : String(error)}\nOutput snippet: ${snippet}${stdout.length > 200 ? "...": ""}`,
     );
   }
 }
