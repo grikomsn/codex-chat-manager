@@ -65,6 +65,22 @@ Resume an active session:
 codex-chat-manager sessions resume --id SESSION_ID
 ```
 
+Shell completions:
+
+```bash
+codex-chat-manager completion bash > /etc/bash_completion.d/codex-chat-manager
+codex-chat-manager completion zsh > "${fpath[1]}/_codex-chat-manager"
+codex-chat-manager completion fish > ~/.config/fish/completions/codex-chat-manager.fish
+```
+
+Global flags:
+
+```bash
+codex-chat-manager --version           # Print version
+codex-chat-manager --verbose ...       # Enable verbose output
+codex-chat-manager --help              # Show help
+```
+
 The app can operate on a copied Codex home if you want to inspect or test against a safe fixture instead of your live `~/.codex`.
 
 ## Raycast Extension
@@ -134,6 +150,7 @@ Key bindings:
 
 - `j` / `k` or arrows: move
 - `space`: toggle selection
+- `/`: enter filter mode (type to filter, Enter to apply, Esc to cancel)
 - `tab`: cycle `all`, `active`, `archived`
 - `enter`, `l`, right arrow: open group drill-in or preview
 - `h`, left arrow, `esc`: back
