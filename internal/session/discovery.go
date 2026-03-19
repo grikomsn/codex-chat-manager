@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,45 +72,31 @@ type sourceString struct {
 	} `json:"subagent"`
 }
 
-// Store owns session discovery, previews, and mutations.
-type Store struct {
-	cfg Config
-}
-
-// NewStore constructs a Store from resolved configuration.
-func NewStore(cfg Config) *Store {
-	return &Store{cfg: cfg}
-}
-
-// Config returns the resolved storage configuration.
-func (s *Store) Config() Config {
-	return s.cfg
-}
-
 // Snapshot is the fully resolved in-memory catalog.
 type Snapshot struct {
 	RecordsByID map[string]SessionRecord
 	Groups      []SessionGroup
 }
 
-// LoadSnapshot scans the Codex storage roots and returns grouped records.
-func (s *Store) LoadSnapshot() (Snapshot, error) {
-	index, err := loadIndex(s.cfg.SessionIndexPath)
+func loadSnapshotImpl(cfg Config) (Snapshot, error) {
+	slog.Debug("loading snapshot", "sessions_dir", cfg.SessionsDir, "archived_dir", cfg.ArchivedDir)
+	index, err := loadIndex(cfg.SessionIndexPath)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
 	var records []SessionRecord
-	active, err := scanRoot(s.cfg.SessionsDir, StatusActive, index.Titles)
+	active, err := scanRoot(cfg.SessionsDir, StatusActive, index.Titles)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	archived, err := scanRoot(s.cfg.ArchivedDir, StatusArchived, index.Titles)
+	archived, err := scanRoot(cfg.ArchivedDir, StatusArchived, index.Titles)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	records = append(records, active...)
 	records = append(records, archived...)
+	slog.Debug("snapshot records loaded", "active", len(active), "archived", len(archived), "total", len(records))
 
 	byID := make(map[string]SessionRecord, len(records))
 	for _, record := range records {
@@ -131,9 +118,11 @@ func (s *Store) LoadSnapshot() (Snapshot, error) {
 }
 
 func scanRoot(root string, status Status, titles map[string]string) ([]SessionRecord, error) {
+	slog.Debug("scanning directory", "path", root, "status", status)
 	info, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
+			slog.Debug("directory does not exist", "path", root)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("stat %s: %w", root, err)
@@ -169,6 +158,7 @@ func scanRoot(root string, status Status, titles map[string]string) ([]SessionRe
 		}
 		return records[i].UpdatedAt.After(records[j].UpdatedAt)
 	})
+	slog.Debug("scan completed", "path", root, "status", status, "records", len(records))
 	return records, nil
 }
 
@@ -242,18 +232,18 @@ func readRolloutHead(path string) (rolloutMeta, error) {
 			var env recordEnvelope
 			if json.Unmarshal([]byte(trimmed), &env) == nil {
 				switch env.Type {
-				case "session_meta":
+				case RecordTypeSessionMeta:
 					if meta.id == "" {
 						readSessionMeta(&meta, env.Payload)
 					}
-				case "event_msg":
+				case RecordTypeEventMsg:
 					readEventTitle(&meta, env.Payload)
-				case "response_item":
+				case RecordTypeResponseItem:
 					readResponseMessage(&meta, env.Payload)
 				}
 			}
 		}
-		if meta.id != "" && meta.hasPreview {
+		if meta.id != "" && meta.hasPreview && meta.titleFallback != "" {
 			break
 		}
 		if err == io.EOF {
@@ -419,7 +409,6 @@ func buildGroup(parent SessionRecord, children []SessionRecord, parentExists boo
 		Children:     children,
 		Status:       groupStatus,
 		AggregateAt:  aggregate,
-		MixedStatus:  mixed,
 		ChildCount:   len(children),
 		CascadesTo:   cascadesTo,
 		ParentExists: parentExists,
