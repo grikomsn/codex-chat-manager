@@ -742,38 +742,44 @@ func (m model) renderListPane() string {
 	if m.statusFilter != "all" {
 		title += " [" + m.statusFilter + "]"
 	}
-	return m.renderPane(title, m.renderScrollableList(m.list.VisibleItems(), m.list.Width(), m.list.Height(), m.list.Index(), m.listScroll), m.list.Width(), m.list.Height())
+	totalItems := len(m.list.VisibleItems())
+	visibleItems := m.visibleListItemCount()
+	contentWidth := m.list.Width()
+	if totalItems > visibleItems {
+		contentWidth = max(1, m.list.Width()-1)
+	}
+	content := m.renderScrollableList(m.list.VisibleItems(), contentWidth, m.list.Height(), m.list.Index(), m.listScroll)
+	scrollPercent := 0.0
+	if totalItems > visibleItems {
+		scrollPercent = float64(m.listScroll) / float64(totalItems-visibleItems)
+	}
+	sb := scrollbar.RenderScrollbar(scrollPercent, totalItems, visibleItems, m.list.Height())
+	return m.renderPane(title, content, m.list.Width(), m.list.Height(), sb)
 }
 
 func (m model) renderChildPane() string {
 	items := m.childList.VisibleItems()
 	height := m.childList.Height()
-	scrollbarWidth := 2
-	contentWidth := max(1, m.childList.Width()-scrollbarWidth)
 	index := m.childList.Index()
 	content := m.childList.View()
 	if len(items) == 0 {
-		return m.renderPane("Grouped Children", content, m.childList.Width(), height)
+		return m.renderPane("Grouped Children", content, m.childList.Width(), height, "")
 	}
 	perPage := m.childList.Paginator.PerPage
-	page := m.childList.Paginator.Page
-	startIndex := page * perPage
 	scrollPercent := 0.0
 	if len(items) > perPage {
 		scrollPercent = float64(index) / float64(len(items)-1)
 	}
 	sb := scrollbar.RenderScrollbar(scrollPercent, len(items), perPage, height)
-	if sb == "" {
-		return m.renderPane("Grouped Children", content, m.childList.Width(), height)
+	if sb != "" {
+		contentWidth := max(1, m.childList.Width()-1)
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			lines[i] = ansi.Truncate(line, contentWidth, "")
+		}
+		content = strings.Join(lines, "\n")
 	}
-	_ = startIndex
-	contentLines := strings.Split(content, "\n")
-	scrollbarLines := strings.Split(sb, "\n")
-	var result []string
-	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
-		result = append(result, contentLines[i]+" "+scrollbarLines[i])
-	}
-	return m.renderPane("Grouped Children", strings.Join(result, "\n"), contentWidth, height)
+	return m.renderPane("Grouped Children", content, m.childList.Width(), height, sb)
 }
 
 func (m model) renderPreviewPane() string {
@@ -783,32 +789,37 @@ func (m model) renderPreviewPane() string {
 	} else {
 		label += " | system shown"
 	}
-	scrollbarWidth := 2
-	contentWidth := max(1, m.viewport.Width-scrollbarWidth)
-	content := m.viewport.View()
-	contentLines := strings.Split(content, "\n")
 	totalLines := m.viewport.TotalLineCount()
 	visibleLines := m.viewport.Height
 	scrollPercent := m.viewport.ScrollPercent()
-	sb := scrollbar.RenderScrollbar(scrollPercent, totalLines, visibleLines, len(contentLines))
-	if sb == "" {
-		return m.renderPane(label, content, m.viewport.Width, m.viewport.Height)
+	sb := scrollbar.RenderScrollbar(scrollPercent, totalLines, visibleLines, m.viewport.Height)
+	content := m.viewport.View()
+	if sb != "" {
+		contentWidth := max(1, m.viewport.Width-1)
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			lines[i] = ansi.Truncate(line, contentWidth, "")
+		}
+		content = strings.Join(lines, "\n")
 	}
-	scrollbarLines := strings.Split(sb, "\n")
-	var result []string
-	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
-		result = append(result, contentLines[i]+" "+scrollbarLines[i])
-	}
-	return m.renderPane(label, strings.Join(result, "\n"), contentWidth, m.viewport.Height)
+	return m.renderPane(label, content, m.viewport.Width, m.viewport.Height, sb)
 }
 
-func (m model) renderPane(title, body string, width, height int) string {
+func (m model) renderPane(title, body string, width, height int, scrollbar string) string {
 	renderWidth := width + chromeStyle.GetPaddingLeft() + chromeStyle.GetPaddingRight()
 	renderHeight := paneHeaderHeight + height + chromeStyle.GetPaddingTop() + chromeStyle.GetPaddingBottom()
+
+	var content string
+	if scrollbar != "" {
+		content = lipgloss.JoinHorizontal(lipgloss.Top, body, scrollbar)
+	} else {
+		content = body
+	}
+
 	return chromeStyle.
 		Width(renderWidth).
 		Height(renderHeight).
-		Render(titleStyle.Render(title) + "\n" + body)
+		Render(titleStyle.Render(title) + "\n" + content)
 }
 
 func (m model) renderStatusLine() string {
@@ -1079,8 +1090,6 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 	if height <= 0 {
 		return ""
 	}
-	scrollbarWidth := 2
-	contentWidth := max(1, width-scrollbarWidth)
 	lines := make([]string, 0, height)
 	if len(items) == 0 {
 		lines = append(lines, subtleStyle.Render("No sessions found."))
@@ -1095,7 +1104,7 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 		if !ok {
 			continue
 		}
-		titleLine, descLine := renderSessionItem(listItem, contentWidth, index == selectedIndex)
+		titleLine, descLine := renderSessionItem(listItem, width, index == selectedIndex)
 		lines = append(lines, titleLine)
 		if len(lines) >= height {
 			break
@@ -1109,24 +1118,7 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	content := strings.Join(lines[:height], "\n")
-	totalItems := len(items)
-	visibleItems := m.visibleListItemCount()
-	scrollPercent := 0.0
-	if totalItems > visibleItems {
-		scrollPercent = float64(scroll) / float64(totalItems-visibleItems)
-	}
-	sb := scrollbar.RenderScrollbar(scrollPercent, totalItems, visibleItems, height)
-	if sb == "" {
-		return content
-	}
-	scrollbarLines := strings.Split(sb, "\n")
-	contentLines := strings.Split(content, "\n")
-	var result []string
-	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
-		result = append(result, contentLines[i]+" "+scrollbarLines[i])
-	}
-	return strings.Join(result, "\n")
+	return strings.Join(lines[:height], "\n")
 }
 
 func renderSessionItem(listItem item, width int, selected bool) (string, string) {
