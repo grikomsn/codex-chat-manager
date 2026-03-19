@@ -4,6 +4,9 @@ CLI, TUI, and Raycast extension for managing local OpenAI Codex chat sessions.
 
 The app reads Codex rollout files directly from disk and treats them as the source of truth. It supports active and archived sessions, parent/subagent grouping, transcript preview, archive/unarchive, resume, bulk delete, and a Raycast browser that reuses the CLI JSON output for discovery and mutations.
 
+> [!WARNING]
+> This project is in early stages of development. APIs, commands, and storage behavior may change without notice. Use with caution in production environments.
+
 ## Install
 
 The recommended path is the release installer:
