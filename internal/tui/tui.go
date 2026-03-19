@@ -178,6 +178,7 @@ type model struct {
 	confirmForm      *huh.Form
 	confirmAct       session.ActionType
 	confirmIDs       []string
+	confirmTitle     string
 	sized            bool
 	showSystem       bool
 }
@@ -663,30 +664,80 @@ func (m *model) selectedIDs() []string {
 
 func (m model) beginConfirm(action session.ActionType) (tea.Model, tea.Cmd) {
 	m.clearError()
-	ids := m.selectedIDs()
-	if len(ids) == 0 {
+	requestedIDs := m.selectedIDs()
+	if len(requestedIDs) == 0 {
 		if group := m.selectedGroup(); group != nil {
-			ids = append(ids, group.Parent.ID)
+			requestedIDs = append(requestedIDs, group.Parent.ID)
 		}
 	}
-	if len(ids) == 0 {
+	if len(requestedIDs) == 0 {
 		return m, nil
 	}
-	m.confirmAct = action
-	m.confirmIDs = ids
-	actionTitle := cases.Title(language.English).String(string(action))
-	var idsDisplay string
-	if len(ids) <= 3 {
-		idsDisplay = strings.Join(ids, ", ")
-	} else {
-		idsDisplay = fmt.Sprintf("%s and %d more", strings.Join(ids[:3], ", "), len(ids)-3)
+
+	_, records, err := m.store.ResolveTargets(requestedIDs)
+	if err != nil {
+		return m, m.setError(err.Error())
 	}
+	if len(records) == 0 {
+		return m, nil
+	}
+	resolvedIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		resolvedIDs = append(resolvedIDs, record.ID)
+	}
+
+	var willChange int
+	var willSkip int
+	var blockedIDs []string
+	for _, record := range records {
+		switch action {
+		case session.ActionArchive:
+			if record.IsArchived() {
+				willSkip++
+			} else {
+				willChange++
+			}
+		case session.ActionUnarchive:
+			if record.Status == session.StatusActive {
+				willSkip++
+			} else {
+				willChange++
+			}
+		case session.ActionDelete:
+			if record.Status != session.StatusArchived {
+				blockedIDs = append(blockedIDs, record.ID)
+				continue
+			}
+			willChange++
+		}
+	}
+	if action == session.ActionDelete && len(blockedIDs) > 0 {
+		return m, m.setError(fmt.Sprintf("delete blocked by active sessions: %s", strings.Join(blockedIDs, ", ")))
+	}
+
+	m.confirmAct = action
+	m.confirmIDs = requestedIDs
+	actionTitle := cases.Title(language.English).String(string(action))
+	var resolvedDisplay string
+	if len(resolvedIDs) <= 3 {
+		resolvedDisplay = strings.Join(resolvedIDs, ", ")
+	} else {
+		resolvedDisplay = fmt.Sprintf("%s and %d more", strings.Join(resolvedIDs[:3], ", "), len(resolvedIDs)-3)
+	}
+	header := fmt.Sprintf("%s %d session(s)?", actionTitle, len(resolvedIDs))
+	if len(resolvedIDs) != len(requestedIDs) {
+		header += fmt.Sprintf("\nSelected %d id(s) → %d session(s)", len(requestedIDs), len(resolvedIDs))
+	}
+	if willSkip > 0 {
+		header += fmt.Sprintf("\nWill change %d, skip %d", willChange, willSkip)
+	}
+	m.confirmTitle = fmt.Sprintf("%s\n%s", header, resolvedDisplay)
 	confirmed := false
 	m.confirmForm = huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
 				Key("confirm").
-				Title(fmt.Sprintf("%s %d session(s)?\n%s", actionTitle, len(ids), idsDisplay)).
+				Title(m.confirmTitle).
 				Affirmative("Yes").
 				Negative("No").
 				Value(&confirmed),

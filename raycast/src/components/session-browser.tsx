@@ -149,12 +149,24 @@ export default function SessionBrowser(props: SessionBrowserProps) {
     }
 
     const ids = targetGroups.map((group) => group.parent.id);
+    const affectedIDs = new Set<string>();
+    for (const group of targetGroups) {
+      for (const id of group.cascades_to) {
+        affectedIDs.add(id);
+      }
+    }
+    const conversationCount = ids.length;
+    const affectedCount = affectedIDs.size;
+    const sessionSuffix =
+      affectedCount !== conversationCount
+        ? ` (${affectedCount} session${affectedCount === 1 ? "" : "s"})`
+        : "";
     const destructive = action === "delete";
     const confirmed = await confirmAlert({
-      title: `${titleCase(action)} ${ids.length} Conversation${ids.length === 1 ? "" : "s"}?`,
+      title: `${titleCase(action)} ${conversationCount} Conversation${conversationCount === 1 ? "" : "s"}${sessionSuffix}?`,
       message: destructive
-        ? "Delete only removes archived rollout files and matching sidecars."
-        : `This will ${action} the selected conversation${ids.length === 1 ? "" : "s"}.`,
+        ? "Delete only removes archived rollout files and matching sidecars. Grouped child sessions are included when present."
+        : `This will ${action} the selected conversation${conversationCount === 1 ? "" : "s"}${sessionSuffix ? " (including grouped child sessions)" : ""}.`,
       primaryAction: {
         title: titleCase(action),
         style: destructive

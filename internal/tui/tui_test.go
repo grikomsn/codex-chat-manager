@@ -61,6 +61,30 @@ func TestResizeKeepsConfirmMode(t *testing.T) {
 	}
 }
 
+func TestConfirmCountsCascadeTargets(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithChildGroup(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 100
+	m.height = 30
+	m.resize()
+
+	updated, _ := m.beginConfirm(session.ActionArchive)
+	m = updated.(model)
+	if m.mode != modeConfirm {
+		t.Fatalf("expected confirm mode, got %v", m.mode)
+	}
+	if m.confirmForm == nil {
+		t.Fatal("expected confirm form")
+	}
+	if got := m.confirmTitle; !strings.Contains(got, "Archive 2 session(s)?") {
+		t.Fatalf("expected confirm title to include cascade count, got %q", got)
+	}
+}
+
 func TestSyncPreviewHidesSystemInstructionsByDefault(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithContext(t)
@@ -217,6 +241,39 @@ func makeTUIFixture(t *testing.T) session.Config {
 func makeTUIFixtureWithContext(t *testing.T) session.Config {
 	t.Helper()
 	return makeTUIFixtureWithGroups(t, 1, true, false)
+}
+
+func makeTUIFixtureWithChildGroup(t *testing.T) session.Config {
+	t.Helper()
+	root := t.TempDir()
+	cfg := session.Config{
+		CodexHome:        root,
+		SessionsDir:      filepath.Join(root, "sessions"),
+		ArchivedDir:      filepath.Join(root, "archived_sessions"),
+		SessionIndexPath: filepath.Join(root, "session_index.jsonl"),
+		ShellSnapshots:   filepath.Join(root, "shell_snapshots"),
+	}
+	path := filepath.Join(cfg.SessionsDir, "2026", "03", "19")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parentID := "11111111-1111-1111-1111-111111111111"
+	childID := "22222222-2222-2222-2222-222222222222"
+
+	parentBody := `{"type":"session_meta","payload":{"id":"` + parentID + `","cwd":"/tmp/app","source":"vscode"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"parent title"}}` + "\n"
+	childBody := `{"type":"session_meta","payload":{"id":"` + childID + `","cwd":"/tmp/app","source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + parentID + `","agent_nickname":"Faraday","agent_role":"explorer"}}}}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"child title"}}` + "\n"
+
+	parentName := "rollout-2026-03-19T10-42-01-" + parentID + ".jsonl"
+	childName := "rollout-2026-03-19T10-42-02-" + childID + ".jsonl"
+	if err := os.WriteFile(filepath.Join(path, parentName), []byte(parentBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, childName), []byte(childBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
 }
 
 func makeTUIFixtureWithGroups(t *testing.T, count int, withContext, longPreview bool) session.Config {
