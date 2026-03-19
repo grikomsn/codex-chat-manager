@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -15,6 +16,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/grikomsn/codex-chat-manager/internal/session"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 const (
@@ -35,6 +38,7 @@ const (
 	modePreview
 	modeGroupDetail
 	modeConfirm
+	modeFilter
 )
 
 type keyMap struct {
@@ -106,6 +110,12 @@ type confirmResultMsg struct {
 
 type confirmDoneMsg struct{}
 
+type clearErrorMsg struct{}
+
+type errorMsg struct {
+	message string
+}
+
 type box struct {
 	x      int
 	y      int
@@ -158,6 +168,7 @@ type model struct {
 	current      *session.SessionGroup
 	currentDoc   session.PreviewDocument
 	err          error
+	errorMsg     string
 	confirmForm  *huh.Form
 	confirmAct   session.ActionType
 	confirmIDs   []string
@@ -269,6 +280,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case clearErrorMsg:
+		m.errorMsg = ""
+		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
@@ -278,12 +292,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Refresh) {
+			m.clearError()
 			if err := m.refresh(); err != nil {
-				m.err = err
+				return m, m.setError(err.Error())
 			}
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.System) {
+			m.clearError()
 			m.showSystem = !m.showSystem
 			m.syncPreviewPreserveOffset()
 			return m, nil
@@ -299,6 +315,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateGroupDetail(msg)
 	case modeConfirm:
 		return m.updateConfirm(msg)
+	case modeFilter:
+		return m.updateFilter(msg)
 	default:
 		return m, nil
 	}
@@ -307,15 +325,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch {
+		case key.Matches(keyMsg, m.keys.Filter):
+			m.clearError()
+			m.mode = modeFilter
+			m.filterInput.Focus()
+			return m, nil
 		case key.Matches(keyMsg, m.keys.Status):
+			m.clearError()
 			m.nextStatusFilter()
 			return m, nil
 		case key.Matches(keyMsg, m.keys.Select):
+			m.clearError()
 			if group := m.selectedGroup(); group != nil {
 				m.toggleGroup(group)
 			}
 			return m, nil
 		case key.Matches(keyMsg, m.keys.Enter):
+			m.clearError()
 			if group := m.selectedGroup(); group != nil {
 				if m.isWide() {
 					if len(group.Children) > 0 {
@@ -340,9 +366,10 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(keyMsg, m.keys.Delete):
 			return m.beginConfirm(session.ActionDelete)
 		case key.Matches(keyMsg, m.keys.Resume):
+			m.clearError()
 			if group := m.selectedGroup(); group != nil {
 				if err := m.store.Resume(nil, group.Parent.ID); err != nil {
-					m.err = err
+					return m, m.setError(err.Error())
 				}
 			}
 			return m, nil
@@ -355,6 +382,35 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.current = group
 		m.syncPreview()
 	}
+	return m, cmd
+}
+
+func (m model) updateFilter(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch {
+		case keyMsg.String() == "enter":
+			m.filterInput.Blur()
+			m.reloadList()
+			if m.isWide() {
+				m.mode = modeListWide
+			} else {
+				m.mode = modeListNarrow
+			}
+			return m, nil
+		case keyMsg.String() == "esc":
+			m.filterInput.Blur()
+			m.filterInput.SetValue("")
+			m.reloadList()
+			if m.isWide() {
+				m.mode = modeListWide
+			} else {
+				m.mode = modeListNarrow
+			}
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
 	return m, cmd
 }
 
@@ -458,6 +514,13 @@ func (m model) View() string {
 	case modeConfirm:
 		parts = append(parts, m.confirmForm.View())
 		return strings.Join(parts, "\n")
+	case modeFilter:
+		if m.isWide() {
+			parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane()))
+		} else {
+			parts = append(parts, m.renderListPane())
+		}
+		parts = append(parts, m.renderFilterInput())
 	default:
 		if m.isWide() {
 			parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane()))
@@ -593,6 +656,7 @@ func (m *model) selectedIDs() []string {
 }
 
 func (m model) beginConfirm(action session.ActionType) (tea.Model, tea.Cmd) {
+	m.clearError()
 	ids := m.selectedIDs()
 	if len(ids) == 0 {
 		if group := m.selectedGroup(); group != nil {
@@ -604,12 +668,19 @@ func (m model) beginConfirm(action session.ActionType) (tea.Model, tea.Cmd) {
 	}
 	m.confirmAct = action
 	m.confirmIDs = ids
+	actionTitle := cases.Title(language.English).String(string(action))
+	var idsDisplay string
+	if len(ids) <= 3 {
+		idsDisplay = strings.Join(ids, ", ")
+	} else {
+		idsDisplay = fmt.Sprintf("%s and %d more", strings.Join(ids[:3], ", "), len(ids)-3)
+	}
 	confirmed := false
 	m.confirmForm = huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
 				Key("confirm").
-				Title(fmt.Sprintf("%s %d session(s)?", strings.Title(string(action)), len(ids))).
+				Title(fmt.Sprintf("%s %d session(s)?\n%s", actionTitle, len(ids), idsDisplay)).
 				Affirmative("Yes").
 				Negative("No").
 				Value(&confirmed),
@@ -645,6 +716,17 @@ func (m *model) refresh() error {
 	m.reloadList()
 	m.syncPreview()
 	return nil
+}
+
+func (m *model) clearError() {
+	m.errorMsg = ""
+}
+
+func (m *model) setError(msg string) tea.Cmd {
+	m.errorMsg = msg
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg {
+		return clearErrorMsg{}
+	})
 }
 
 func (m model) isWide() bool {
@@ -687,14 +769,21 @@ func (m model) renderStatusLine() string {
 }
 
 func (m model) renderErrorLine() string {
-	if m.err == nil {
-		return ""
+	if m.err != nil {
+		return errorStyle.Width(m.width).Render(m.err.Error())
 	}
-	return errorStyle.Width(m.width).Render(m.err.Error())
+	if m.errorMsg != "" {
+		return errorStyle.Width(m.width).Render(m.errorMsg)
+	}
+	return ""
+}
+
+func (m model) renderFilterInput() string {
+	return subtleStyle.Width(m.width).Render(m.filterInput.View())
 }
 
 func (m *model) syncModeToSize() {
-	if m.mode == modeConfirm {
+	if m.mode == modeConfirm || m.mode == modeFilter {
 		return
 	}
 	if m.isWide() {
