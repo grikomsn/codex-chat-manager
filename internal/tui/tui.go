@@ -189,6 +189,10 @@ var (
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ff5f5f"))
 	itemStyles = list.NewDefaultDelegate().Styles
+	scrollbar  = ScrollbarStyle{
+		Track: subtleStyle,
+		Thumb: titleStyle,
+	}
 )
 
 // Run starts the interactive session manager.
@@ -742,7 +746,34 @@ func (m model) renderListPane() string {
 }
 
 func (m model) renderChildPane() string {
-	return m.renderPane("Grouped Children", m.childList.View(), m.childList.Width(), m.childList.Height())
+	items := m.childList.VisibleItems()
+	height := m.childList.Height()
+	scrollbarWidth := 2
+	contentWidth := max(1, m.childList.Width()-scrollbarWidth)
+	index := m.childList.Index()
+	content := m.childList.View()
+	if len(items) == 0 {
+		return m.renderPane("Grouped Children", content, m.childList.Width(), height)
+	}
+	perPage := m.childList.Paginator.PerPage
+	page := m.childList.Paginator.Page
+	startIndex := page * perPage
+	scrollPercent := 0.0
+	if len(items) > perPage {
+		scrollPercent = float64(index) / float64(len(items)-1)
+	}
+	sb := scrollbar.RenderScrollbar(scrollPercent, len(items), perPage, height)
+	if sb == "" {
+		return m.renderPane("Grouped Children", content, m.childList.Width(), height)
+	}
+	_ = startIndex
+	contentLines := strings.Split(content, "\n")
+	scrollbarLines := strings.Split(sb, "\n")
+	var result []string
+	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
+		result = append(result, contentLines[i]+" "+scrollbarLines[i])
+	}
+	return m.renderPane("Grouped Children", strings.Join(result, "\n"), contentWidth, height)
 }
 
 func (m model) renderPreviewPane() string {
@@ -752,7 +783,23 @@ func (m model) renderPreviewPane() string {
 	} else {
 		label += " | system shown"
 	}
-	return m.renderPane(label, m.viewport.View(), m.viewport.Width, m.viewport.Height)
+	scrollbarWidth := 2
+	contentWidth := max(1, m.viewport.Width-scrollbarWidth)
+	content := m.viewport.View()
+	contentLines := strings.Split(content, "\n")
+	totalLines := m.viewport.TotalLineCount()
+	visibleLines := m.viewport.Height
+	scrollPercent := m.viewport.ScrollPercent()
+	sb := scrollbar.RenderScrollbar(scrollPercent, totalLines, visibleLines, len(contentLines))
+	if sb == "" {
+		return m.renderPane(label, content, m.viewport.Width, m.viewport.Height)
+	}
+	scrollbarLines := strings.Split(sb, "\n")
+	var result []string
+	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
+		result = append(result, contentLines[i]+" "+scrollbarLines[i])
+	}
+	return m.renderPane(label, strings.Join(result, "\n"), contentWidth, m.viewport.Height)
 }
 
 func (m model) renderPane(title, body string, width, height int) string {
@@ -1032,6 +1079,8 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 	if height <= 0 {
 		return ""
 	}
+	scrollbarWidth := 2
+	contentWidth := max(1, width-scrollbarWidth)
 	lines := make([]string, 0, height)
 	if len(items) == 0 {
 		lines = append(lines, subtleStyle.Render("No sessions found."))
@@ -1046,7 +1095,7 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 		if !ok {
 			continue
 		}
-		titleLine, descLine := renderSessionItem(listItem, width, index == selectedIndex)
+		titleLine, descLine := renderSessionItem(listItem, contentWidth, index == selectedIndex)
 		lines = append(lines, titleLine)
 		if len(lines) >= height {
 			break
@@ -1060,7 +1109,24 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	return strings.Join(lines[:height], "\n")
+	content := strings.Join(lines[:height], "\n")
+	totalItems := len(items)
+	visibleItems := m.visibleListItemCount()
+	scrollPercent := 0.0
+	if totalItems > visibleItems {
+		scrollPercent = float64(scroll) / float64(totalItems-visibleItems)
+	}
+	sb := scrollbar.RenderScrollbar(scrollPercent, totalItems, visibleItems, height)
+	if sb == "" {
+		return content
+	}
+	scrollbarLines := strings.Split(sb, "\n")
+	contentLines := strings.Split(content, "\n")
+	var result []string
+	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
+		result = append(result, contentLines[i]+" "+scrollbarLines[i])
+	}
+	return strings.Join(result, "\n")
 }
 
 func renderSessionItem(listItem item, width int, selected bool) (string, string) {
