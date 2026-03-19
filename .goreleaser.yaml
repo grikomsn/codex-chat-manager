@@ -1,0 +1,43 @@
+version: 2
+
+project_name: codex-chat-manager
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: codex-chat-manager
+    main: ./cmd/codex-chat-manager
+    binary: codex-chat-manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: release
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+    name_template: >-
+      {{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  mode: replace
