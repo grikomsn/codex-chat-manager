@@ -13,12 +13,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/grikomsn/codex-chat-manager/internal/session"
 )
 
 const (
-	wideWidth  = 120
-	wideHeight = 20
+	minWideListWidth    = 36
+	minWidePreviewWidth = 44
+	minWideHeight       = 12
+	paneHeaderHeight    = 1
+	listDelegateHeight  = 2
+	listDelegateSpacing = 1
+	mouseWheelStep      = 3
 )
 
 type mode int
@@ -100,6 +106,37 @@ type confirmResultMsg struct {
 
 type confirmDoneMsg struct{}
 
+type box struct {
+	x      int
+	y      int
+	width  int
+	height int
+}
+
+func (b box) contains(x, y int) bool {
+	return x >= b.x && x < b.x+b.width && y >= b.y && y < b.y+b.height
+}
+
+func (b box) contentRect(style lipgloss.Style) box {
+	left := style.GetBorderLeftSize() + style.GetPaddingLeft()
+	right := style.GetBorderRightSize() + style.GetPaddingRight()
+	top := style.GetBorderTopSize() + style.GetPaddingTop()
+	bottom := style.GetBorderBottomSize() + style.GetPaddingBottom()
+	return box{
+		x:      b.x + left,
+		y:      b.y + top,
+		width:  max(0, b.width-left-right),
+		height: max(0, b.height-top-bottom),
+	}
+}
+
+type viewLayout struct {
+	body        box
+	listPane    box
+	childPane   box
+	previewPane box
+}
+
 type model struct {
 	cfg          session.Config
 	store        *session.Store
@@ -113,6 +150,7 @@ type model struct {
 	mode         mode
 	width        int
 	height       int
+	listScroll   int
 	statusFilter string
 	groups       []session.SessionGroup
 	children     []session.SessionRecord
@@ -123,6 +161,7 @@ type model struct {
 	confirmForm  *huh.Form
 	confirmAct   session.ActionType
 	confirmIDs   []string
+	sized        bool
 	showSystem   bool
 }
 
@@ -138,6 +177,7 @@ var (
 			Foreground(lipgloss.Color("#9aa4b2"))
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ff5f5f"))
+	itemStyles = list.NewDefaultDelegate().Styles
 )
 
 // Run starts the interactive session manager.
@@ -146,7 +186,7 @@ func Run(cfg session.Config, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(stdout))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(stderr, err)
 		return err
@@ -162,10 +202,13 @@ func initialModel(cfg session.Config) (model, error) {
 		return model{}, err
 	}
 	delegate := list.NewDefaultDelegate()
-	delegate.SetHeight(2)
+	delegate.SetHeight(listDelegateHeight)
+	delegate.SetSpacing(listDelegateSpacing)
 	delegate.ShowDescription = true
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "Codex Sessions"
+	l.SetShowTitle(false)
+	l.SetShowFilter(false)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
 	l.SetShowStatusBar(false)
@@ -173,6 +216,8 @@ func initialModel(cfg session.Config) (model, error) {
 
 	cl := list.New(nil, delegate, 0, 0)
 	cl.Title = "Grouped Children"
+	cl.SetShowTitle(false)
+	cl.SetShowFilter(false)
 	cl.SetShowHelp(false)
 	cl.SetShowPagination(false)
 	cl.SetShowStatusBar(false)
@@ -209,10 +254,20 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		firstSize := !m.sized
+		m.sized = true
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resize()
-		m.syncPreview()
+		m.syncPreviewPreserveOffset()
+		if firstSize {
+			return m, tea.ClearScreen
+		}
+		return m, nil
+	case tea.MouseMsg:
+		if cmd, handled := m.handleMouse(msg); handled {
+			return m, cmd
+		}
 		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Quit) {
@@ -230,7 +285,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(msg, m.keys.System) {
 			m.showSystem = !m.showSystem
-			m.syncPreview()
+			m.syncPreviewPreserveOffset()
 			return m, nil
 		}
 	}
@@ -295,6 +350,7 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+	m.ensureListSelectionVisible()
 	if group := m.selectedGroup(); group != nil && m.isWide() {
 		m.current = group
 		m.syncPreview()
@@ -384,65 +440,63 @@ func (m model) View() string {
 		return "Loading..."
 	}
 	helpView := m.help.View(m.keys)
-	statusLine := lipgloss.NewStyle().Foreground(lipgloss.Color("#a0a0a0")).Render(fmt.Sprintf("filter=%s selected=%d", m.statusFilter, len(m.selection)))
-	errLine := ""
-	if m.err != nil {
-		errLine = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5f5f")).Render(m.err.Error()) + "\n"
+	statusLine := m.renderStatusLine()
+	errLine := m.renderErrorLine()
+	parts := make([]string, 0, 4)
+	if errLine != "" {
+		parts = append(parts, errLine)
 	}
 	switch m.mode {
 	case modePreview:
-		return errLine + m.viewport.View() + "\n" + statusLine + "\n" + helpView
+		parts = append(parts, m.renderPreviewPane())
 	case modeGroupDetail:
-		body := m.childList.View()
+		body := m.renderPreviewPane()
 		if m.isWide() {
 			body = lipgloss.JoinHorizontal(lipgloss.Top, m.renderChildPane(), m.renderPreviewPane())
 		}
-		return errLine + body + "\n" + statusLine + "\n" + helpView
+		parts = append(parts, body)
 	case modeConfirm:
-		return errLine + m.confirmForm.View()
+		parts = append(parts, m.confirmForm.View())
+		return strings.Join(parts, "\n")
 	default:
 		if m.isWide() {
-			return errLine + lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane()) + "\n" + statusLine + "\n" + helpView
+			parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane()))
+		} else {
+			parts = append(parts, m.renderListPane())
 		}
-		return errLine + m.renderListPane() + "\n" + statusLine + "\n" + helpView
 	}
+	parts = append(parts, statusLine, helpView)
+	return strings.Join(parts, "\n")
 }
 
 func (m *model) resize() {
-	footerHeight := 4
-	bodyHeight := max(1, m.height-footerHeight)
-	frameW := chromeStyle.GetHorizontalFrameSize()
-	frameH := chromeStyle.GetVerticalFrameSize()
-	if m.isWide() {
-		m.mode = modeListWide
-		left := max(30, m.width/3)
-		right := max(30, m.width-left)
-		m.list.SetSize(max(10, left-frameW), max(5, bodyHeight-frameH))
-		m.childList.SetSize(max(10, left-frameW), max(5, bodyHeight-frameH))
-		m.viewport.Width = max(10, right-frameW)
-		m.viewport.Height = max(5, bodyHeight-frameH)
-	} else {
-		if m.mode == modeListWide {
-			m.mode = modeListNarrow
-		}
-		m.list.SetSize(max(10, m.width-frameW), max(5, bodyHeight-frameH))
-		m.childList.SetSize(max(10, m.width-frameW), max(5, bodyHeight-frameH))
-		m.viewport.Width = max(10, m.width-frameW)
-		m.viewport.Height = max(5, bodyHeight-frameH)
-	}
-	m.help.Width = m.width
+	m.help.Width = max(0, m.width)
+	m.syncModeToSize()
+	layout := m.layout()
+	m.list.SetSize(m.componentWidth(layout.listPane), m.componentHeight(layout.listPane))
+	m.childList.SetSize(m.componentWidth(layout.childPane), m.componentHeight(layout.childPane))
+	m.viewport.Width = m.componentWidth(layout.previewPane)
+	m.viewport.Height = m.componentHeight(layout.previewPane)
+	m.clampListScroll()
 }
 
 func (m *model) reloadList() {
-	items := make([]list.Item, 0, len(m.groups))
-	for _, group := range m.filteredGroups() {
+	filtered := m.filteredGroups()
+	items := make([]list.Item, 0, len(filtered))
+	for _, group := range filtered {
 		items = append(items, item{group: group})
 	}
 	m.list.SetItems(items)
+	if len(items) > 0 && m.list.SelectedItem() == nil {
+		m.list.Select(0)
+	}
+	m.clampListScroll()
 	if selected := m.selectedGroup(); selected != nil {
 		m.current = selected
-	} else if len(m.groups) > 0 {
-		m.current = &m.groups[0]
+	} else if len(filtered) > 0 {
+		m.current = &filtered[0]
+	} else {
+		m.current = nil
 	}
 }
 
@@ -486,9 +540,18 @@ func (m *model) loadChildren(children []session.SessionRecord) {
 }
 
 func (m *model) syncPreview() {
+	m.syncPreviewWithReset(true)
+}
+
+func (m *model) syncPreviewPreserveOffset() {
+	m.syncPreviewWithReset(false)
+}
+
+func (m *model) syncPreviewWithReset(reset bool) {
 	if m.current == nil {
 		return
 	}
+	offset := m.viewport.YOffset
 	doc, err := m.cache.Load(m.current.Parent)
 	if err != nil {
 		m.err = err
@@ -496,7 +559,11 @@ func (m *model) syncPreview() {
 	}
 	m.currentDoc = doc
 	m.viewport.SetContent(session.RenderPreview(doc, m.viewport.Width, m.showSystem))
-	m.viewport.GotoTop()
+	if reset {
+		m.viewport.GotoTop()
+		return
+	}
+	m.viewport.SetYOffset(offset)
 }
 
 func (m *model) toggleGroup(group *session.SessionGroup) {
@@ -581,7 +648,7 @@ func (m *model) refresh() error {
 }
 
 func (m model) isWide() bool {
-	return m.width >= wideWidth && m.height >= wideHeight
+	return m.width >= minWideListWidth+minWidePreviewWidth && m.height >= minWideHeight
 }
 
 func (m model) renderListPane() string {
@@ -589,17 +656,11 @@ func (m model) renderListPane() string {
 	if m.statusFilter != "all" {
 		title += " [" + m.statusFilter + "]"
 	}
-	return chromeStyle.
-		Width(m.list.Width()).
-		Height(m.list.Height()).
-		Render(titleStyle.Render(title) + "\n" + m.list.View())
+	return m.renderPane(title, m.renderScrollableList(m.list.VisibleItems(), m.list.Width(), m.list.Height(), m.list.Index(), m.listScroll), m.list.Width(), m.list.Height())
 }
 
 func (m model) renderChildPane() string {
-	return chromeStyle.
-		Width(m.childList.Width()).
-		Height(m.childList.Height()).
-		Render(titleStyle.Render("Grouped Children") + "\n" + m.childList.View())
+	return m.renderPane("Grouped Children", m.childList.View(), m.childList.Width(), m.childList.Height())
 }
 
 func (m model) renderPreviewPane() string {
@@ -609,8 +670,320 @@ func (m model) renderPreviewPane() string {
 	} else {
 		label += " | system shown"
 	}
+	return m.renderPane(label, m.viewport.View(), m.viewport.Width, m.viewport.Height)
+}
+
+func (m model) renderPane(title, body string, width, height int) string {
+	renderWidth := width + chromeStyle.GetPaddingLeft() + chromeStyle.GetPaddingRight()
+	renderHeight := paneHeaderHeight + height + chromeStyle.GetPaddingTop() + chromeStyle.GetPaddingBottom()
 	return chromeStyle.
-		Width(m.viewport.Width).
-		Height(m.viewport.Height).
-		Render(titleStyle.Render(label) + "\n" + m.viewport.View())
+		Width(renderWidth).
+		Height(renderHeight).
+		Render(titleStyle.Render(title) + "\n" + body)
+}
+
+func (m model) renderStatusLine() string {
+	return subtleStyle.Width(m.width).Render(fmt.Sprintf("filter=%s selected=%d", m.statusFilter, len(m.selection)))
+}
+
+func (m model) renderErrorLine() string {
+	if m.err == nil {
+		return ""
+	}
+	return errorStyle.Width(m.width).Render(m.err.Error())
+}
+
+func (m *model) syncModeToSize() {
+	if m.mode == modeConfirm {
+		return
+	}
+	if m.isWide() {
+		if m.mode == modeListNarrow || m.mode == modePreview {
+			m.mode = modeListWide
+		}
+		return
+	}
+	switch m.mode {
+	case modeListWide:
+		m.mode = modeListNarrow
+	case modeGroupDetail:
+		if m.current != nil {
+			m.mode = modePreview
+		} else {
+			m.mode = modeListNarrow
+		}
+	}
+}
+
+func (m model) layout() viewLayout {
+	errorHeight := renderHeight(m.renderErrorLine())
+	statusHeight := renderHeight(m.renderStatusLine())
+	helpHeight := renderHeight(m.help.View(m.keys))
+	bodyHeight := max(1, m.height-errorHeight-statusHeight-helpHeight)
+	layout := viewLayout{
+		body: box{x: 0, y: errorHeight, width: m.width, height: bodyHeight},
+	}
+	if m.isWide() {
+		leftWidth := clamp(m.width/3, minWideListWidth, m.width-minWidePreviewWidth)
+		layout.listPane = box{x: 0, y: errorHeight, width: leftWidth, height: bodyHeight}
+		layout.childPane = layout.listPane
+		layout.previewPane = box{x: leftWidth, y: errorHeight, width: m.width - leftWidth, height: bodyHeight}
+		return layout
+	}
+	layout.listPane = layout.body
+	layout.childPane = layout.body
+	layout.previewPane = layout.body
+	return layout
+}
+
+func (m model) componentWidth(pane box) int {
+	return max(1, pane.width-chromeStyle.GetHorizontalFrameSize())
+}
+
+func (m model) componentHeight(pane box) int {
+	return max(1, pane.height-chromeStyle.GetVerticalFrameSize()-paneHeaderHeight)
+}
+
+func (m *model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
+	if m.mode == modeConfirm || m.width == 0 || m.height == 0 {
+		return nil, false
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
+		return m.handleMouseWheel(msg), true
+	case tea.MouseButtonLeft:
+		if msg.Action != tea.MouseActionPress {
+			return nil, true
+		}
+		return m.handleMouseClick(msg), true
+	default:
+		return nil, true
+	}
+}
+
+func (m *model) handleMouseWheel(msg tea.MouseMsg) tea.Cmd {
+	layout := m.layout()
+	switch m.mode {
+	case modePreview:
+		if layout.previewPane.contains(msg.X, msg.Y) {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return cmd
+		}
+	case modeGroupDetail:
+		if m.isWide() && layout.previewPane.contains(msg.X, msg.Y) {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return cmd
+		}
+		if layout.childPane.contains(msg.X, msg.Y) {
+			m.scrollChildList(msg)
+		}
+	default:
+		if m.isWide() && layout.previewPane.contains(msg.X, msg.Y) {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return cmd
+		}
+		if layout.listPane.contains(msg.X, msg.Y) {
+			m.scrollList(msg)
+		}
+	}
+	return nil
+}
+
+func (m *model) handleMouseClick(msg tea.MouseMsg) tea.Cmd {
+	layout := m.layout()
+	switch m.mode {
+	case modePreview:
+		return nil
+	case modeGroupDetail:
+		if !layout.childPane.contains(msg.X, msg.Y) {
+			return nil
+		}
+		index := listIndexAtPosition(m.childList, layout.childPane, msg, m.childList.Paginator.Page*m.childList.Paginator.PerPage)
+		if index < 0 {
+			return nil
+		}
+		m.childList.Select(index)
+		if child, ok := m.childList.SelectedItem().(item); ok {
+			group := child.group
+			m.current = &group
+			m.syncPreview()
+		}
+	default:
+		if !layout.listPane.contains(msg.X, msg.Y) {
+			return nil
+		}
+		index := listIndexAtPosition(m.list, layout.listPane, msg, m.listScroll)
+		if index < 0 {
+			return nil
+		}
+		wasSelected := index == m.list.Index()
+		m.list.Select(index)
+		group := m.selectedGroup()
+		if group == nil {
+			return nil
+		}
+		m.current = group
+		if !m.isWide() {
+			m.syncPreview()
+			m.mode = modePreview
+			return nil
+		}
+		if wasSelected && len(group.Children) > 0 {
+			m.current = group
+			m.loadChildren(group.Children)
+			m.mode = modeGroupDetail
+			return nil
+		}
+		m.syncPreview()
+	}
+	return nil
+}
+
+func (m *model) scrollList(msg tea.MouseMsg) {
+	delta := mouseWheelStep
+	if msg.Button == tea.MouseButtonWheelUp {
+		delta = -delta
+	}
+	m.listScroll = clamp(m.listScroll+delta, 0, m.maxListScroll())
+}
+
+func (m *model) scrollChildList(msg tea.MouseMsg) {
+	scrollListModel(&m.childList, msg)
+	if child, ok := m.childList.SelectedItem().(item); ok {
+		group := child.group
+		m.current = &group
+		m.syncPreview()
+	}
+}
+
+func scrollListModel(l *list.Model, msg tea.MouseMsg) {
+	items := l.VisibleItems()
+	if len(items) == 0 || l.FilterState() == list.Filtering {
+		return
+	}
+	delta := mouseWheelStep
+	if msg.Button == tea.MouseButtonWheelUp {
+		delta = -delta
+	}
+	index := clamp(l.Index()+delta, 0, len(items)-1)
+	l.Select(index)
+}
+
+func listIndexAtPosition(l list.Model, pane box, msg tea.MouseMsg, start int) int {
+	content := pane.contentRect(chromeStyle)
+	row := msg.Y - content.y - paneHeaderHeight
+	if row < 0 || row >= l.Height() {
+		return -1
+	}
+	indexOnPage := row / (listDelegateHeight + listDelegateSpacing)
+	items := l.VisibleItems()
+	index := start + indexOnPage
+	if index < start || index >= len(items) {
+		return -1
+	}
+	return index
+}
+
+func clamp(value, lower, upper int) int {
+	if value < lower {
+		return lower
+	}
+	if value > upper {
+		return upper
+	}
+	return value
+}
+
+func renderHeight(s string) int {
+	if s == "" {
+		return 0
+	}
+	return lipgloss.Height(s)
+}
+
+func (m *model) clampListScroll() {
+	m.listScroll = clamp(m.listScroll, 0, m.maxListScroll())
+}
+
+func (m model) maxListScroll() int {
+	return max(0, len(m.list.VisibleItems())-m.visibleListItemCount())
+}
+
+func (m model) visibleListItemCount() int {
+	if m.list.Height() <= 0 {
+		return 0
+	}
+	return max(1, (m.list.Height()+listDelegateSpacing)/(listDelegateHeight+listDelegateSpacing))
+}
+
+func (m *model) ensureListSelectionVisible() {
+	items := m.list.VisibleItems()
+	if len(items) == 0 {
+		m.listScroll = 0
+		return
+	}
+	index := clamp(m.list.Index(), 0, len(items)-1)
+	visible := m.visibleListItemCount()
+	if visible <= 0 {
+		m.listScroll = 0
+		return
+	}
+	if index < m.listScroll {
+		m.listScroll = index
+	} else if index >= m.listScroll+visible {
+		m.listScroll = index - visible + 1
+	}
+	m.clampListScroll()
+}
+
+func (m model) renderScrollableList(items []list.Item, width, height, selectedIndex, scroll int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := make([]string, 0, height)
+	if len(items) == 0 {
+		lines = append(lines, subtleStyle.Render("No sessions found."))
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return strings.Join(lines[:height], "\n")
+	}
+	scroll = clamp(scroll, 0, max(0, len(items)-1))
+	for index := scroll; index < len(items) && len(lines) < height; index++ {
+		listItem, ok := items[index].(item)
+		if !ok {
+			continue
+		}
+		titleLine, descLine := renderSessionItem(listItem, width, index == selectedIndex)
+		lines = append(lines, titleLine)
+		if len(lines) >= height {
+			break
+		}
+		lines = append(lines, descLine)
+		if len(lines) >= height {
+			break
+		}
+		lines = append(lines, "")
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines[:height], "\n")
+}
+
+func renderSessionItem(listItem item, width int, selected bool) (string, string) {
+	textWidth := max(1, width-itemStyles.NormalTitle.GetPaddingLeft()-itemStyles.NormalTitle.GetPaddingRight())
+	title := ansi.Truncate(listItem.Title(), textWidth, "…")
+	description := listItem.Description()
+	if line := strings.Split(description, "\n"); len(line) > 0 {
+		description = line[0]
+	}
+	description = ansi.Truncate(description, textWidth, "…")
+	if selected {
+		return itemStyles.SelectedTitle.Render(title), itemStyles.SelectedDesc.Render(description)
+	}
+	return itemStyles.NormalTitle.Render(title), itemStyles.NormalDesc.Render(description)
 }
