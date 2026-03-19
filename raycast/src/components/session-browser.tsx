@@ -11,8 +11,8 @@ import {
   showToast,
   useNavigation,
 } from "@raycast/api";
-import { useCachedPromise, useLocalStorage } from "@raycast/utils";
-import { useEffect, useMemo, useState } from "react";
+import { useCachedPromise } from "@raycast/utils";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getCachedGroups, setCachedGroups } from "../cache";
 import { getManagerRuntime, runAction, useSessionGroups } from "../cli";
@@ -27,14 +27,9 @@ import {
   statusIcon,
   statusLabel,
 } from "../format";
+import { useLocalStorageState, useQueueState } from "../hooks";
 import { parsePreviewFromFile, renderPreviewMarkdown } from "../lib";
-import {
-  SHOW_SYSTEM_KEY,
-  SESSION_QUEUE_KEY,
-  addToQueue,
-  reconcileQueue,
-  removeFromQueue,
-} from "../queue";
+import { SHOW_SYSTEM_KEY } from "../queue";
 import { displayTitle, subtitle } from "../record";
 import type {
   MutationAction,
@@ -63,20 +58,9 @@ export default function SessionBrowser(props: SessionBrowserProps) {
   const [selectedID, setSelectedID] = useState<string | undefined>(
     initialGroups?.[0]?.parent.id ?? cachedGroups[0]?.parent.id,
   );
-  const {
-    value: queuedIDsValue,
-    setValue: setQueuedIDs,
-    isLoading: queueLoading,
-  } = useLocalStorage<string[]>(SESSION_QUEUE_KEY, []);
-  const {
-    value: showSystemValue,
-    setValue: setShowSystem,
-    isLoading: showSystemLoading,
-  } = useLocalStorage<boolean>(SHOW_SYSTEM_KEY, false);
+  const { value: showSystem, setValue: setShowSystem } =
+    useLocalStorageState<boolean>(SHOW_SYSTEM_KEY, false);
 
-  const queuedIDs = queuedIDsValue ?? [];
-  const queuedSet = useMemo(() => new Set(queuedIDs), [queuedIDs]);
-  const showSystem = showSystemValue ?? false;
   const topLevel = !initialGroups;
 
   const sessionState = useSessionGroups(
@@ -103,16 +87,6 @@ export default function SessionBrowser(props: SessionBrowserProps) {
     }
     setSelectedID(groups[0]?.parent.id);
   }, [groups, selectedID]);
-
-  useEffect(() => {
-    if (!topLevel || queueLoading) {
-      return;
-    }
-    const next = reconcileQueue(queuedIDs, knownTopLevelIDs);
-    if (next.length !== queuedIDs.length) {
-      void setQueuedIDs(next);
-    }
-  }, [knownTopLevelIDs, queueLoading, queuedIDs, setQueuedIDs, topLevel]);
 
   const selectedGroup = useMemo(
     () => groups.find((group) => group.parent.id === selectedID) ?? groups[0],
@@ -142,20 +116,22 @@ export default function SessionBrowser(props: SessionBrowserProps) {
     return renderPreviewMarkdown(previewState.data, showSystem);
   }, [previewState.data, previewState.error, selectedGroup, showSystem]);
 
-  const revalidateAll = async () => {
+  const {
+    queuedIDs,
+    queuedSet,
+    toggleQueue,
+    clearQueue,
+    setQueuedIDs,
+    isLoading: queueLoading,
+  } = useQueueState(topLevel ? knownTopLevelIDs : []);
+
+  const revalidateAll = useCallback(async () => {
     if (topLevel) {
       await sessionState?.revalidate?.();
       return;
     }
     await props.onRevalidateParent?.();
-  };
-
-  const toggleQueue = async (group: SessionGroup) => {
-    const next = queuedSet.has(group.parent.id)
-      ? removeFromQueue(queuedIDs, group.parent.id)
-      : addToQueue(queuedIDs, group.parent.id);
-    await setQueuedIDs(next);
-  };
+  }, [topLevel, sessionState, props.onRevalidateParent]);
 
   const queuedGroups = useMemo(
     () =>
@@ -227,11 +203,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
 
   return (
     <List
-      isLoading={
-        Boolean(topLevel && sessionState?.isLoading) ||
-        queueLoading ||
-        showSystemLoading
-      }
+      isLoading={Boolean(topLevel && sessionState?.isLoading) || queueLoading}
       isShowingDetail
       searchText={searchText}
       onSearchTextChange={setSearchText}
@@ -362,7 +334,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
                 <Action
                   title={queued ? "Remove from Queue" : "Add to Queue"}
                   icon={queued ? Icon.MinusCircle : Icon.PlusCircle}
-                  onAction={() => void toggleQueue(group)}
+                  onAction={() => void toggleQueue(group.parent.id)}
                 />
                 {shouldAllowArchive(group) ? (
                   <Action
@@ -432,9 +404,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
                     <Action
                       title="Clear Queue"
                       icon={Icon.XMarkCircle}
-                      onAction={() => {
-                        void setQueuedIDs([]);
-                      }}
+                      onAction={() => void clearQueue()}
                     />
                   </ActionPanel.Section>
                 ) : null}
