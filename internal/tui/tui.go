@@ -30,6 +30,13 @@ const (
 	mouseWheelStep      = 3
 )
 
+const (
+	colorBorder = "#5f6b7a"
+	colorTitle  = "#f7f2e8"
+	colorSubtle = "#9aa4b2"
+	colorError  = "#ff5f5f"
+)
+
 type mode int
 
 const (
@@ -163,11 +170,9 @@ type model struct {
 	listScroll   int
 	statusFilter string
 	groups       []session.SessionGroup
-	children     []session.SessionRecord
 	selection    map[string]struct{}
 	current      *session.SessionGroup
 	currentDoc   session.PreviewDocument
-	err          error
 	errorMsg     string
 	confirmForm  *huh.Form
 	confirmAct   session.ActionType
@@ -176,18 +181,43 @@ type model struct {
 	showSystem   bool
 }
 
+func (m *model) setDefaultMode() {
+	if m.isWide() {
+		m.mode = modeListWide
+	} else {
+		m.mode = modeListNarrow
+	}
+}
+
+func mergeScrollbar(content, scrollbar string) string {
+	contentLines := strings.Split(content, "\n")
+	scrollbarLines := strings.Split(scrollbar, "\n")
+	var result []string
+	for i := 0; i < len(contentLines) && i < len(scrollbarLines); i++ {
+		result = append(result, contentLines[i]+" "+scrollbarLines[i])
+	}
+	return strings.Join(result, "\n")
+}
+
+func (m model) renderMainView() string {
+	if m.isWide() {
+		return lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane())
+	}
+	return m.renderListPane()
+}
+
 var (
 	chromeStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("#5f6b7a")).
+			BorderForeground(lipgloss.Color(colorBorder)).
 			Padding(0, 1)
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#f7f2e8"))
+			Foreground(lipgloss.Color(colorTitle))
 	subtleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9aa4b2"))
+			Foreground(lipgloss.Color(colorSubtle))
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#ff5f5f"))
+			Foreground(lipgloss.Color(colorError))
 	itemStyles = list.NewDefaultDelegate().Styles
 	scrollbar  = ScrollbarStyle{
 		Track: subtleStyle,
@@ -254,7 +284,7 @@ func initialModel(cfg session.Config) (model, error) {
 		childList:    cl,
 		viewport:     vp,
 		filterInput:  ti,
-		statusFilter: "all",
+		statusFilter: session.StatusFilterAll,
 		groups:       snapshot.Groups,
 		selection:    make(map[string]struct{}),
 	}
@@ -348,7 +378,7 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearError()
 			if group := m.selectedGroup(); group != nil {
 				if m.isWide() {
-					if len(group.Children) > 0 {
+					if group.HasChildren() {
 						m.current = group
 						m.loadChildren(group.Children)
 						m.mode = modeGroupDetail
@@ -395,21 +425,13 @@ func (m model) updateFilter(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case keyMsg.String() == "enter":
 			m.filterInput.Blur()
 			m.reloadList()
-			if m.isWide() {
-				m.mode = modeListWide
-			} else {
-				m.mode = modeListNarrow
-			}
+			m.setDefaultMode()
 			return m, nil
 		case keyMsg.String() == "esc":
 			m.filterInput.Blur()
 			m.filterInput.SetValue("")
 			m.reloadList()
-			if m.isWide() {
-				m.mode = modeListWide
-			} else {
-				m.mode = modeListNarrow
-			}
+			m.setDefaultMode()
 			return m, nil
 		}
 	}
@@ -432,11 +454,7 @@ func (m model) updateGroupDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch {
 		case key.Matches(keyMsg, m.keys.Back):
-			if m.isWide() {
-				m.mode = modeListWide
-			} else {
-				m.mode = modeListNarrow
-			}
+			m.setDefaultMode()
 			return m, nil
 		case key.Matches(keyMsg, m.keys.Select):
 			if item, ok := m.childList.SelectedItem().(item); ok {
@@ -458,28 +476,17 @@ func (m model) updateGroupDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case confirmDoneMsg:
-		m.mode = modeListWide
-		if !m.isWide() {
-			m.mode = modeListNarrow
-		}
+		m.setDefaultMode()
 		return m, nil
 	case confirmResultMsg:
 		if !msg.confirmed {
-			if m.isWide() {
-				m.mode = modeListWide
-			} else {
-				m.mode = modeListNarrow
-			}
+			m.setDefaultMode()
 			return m, nil
 		}
 		if err := m.performConfirm(); err != nil {
-			m.err = err
+			return m, m.setError(err.Error())
 		}
-		if m.isWide() {
-			m.mode = modeListWide
-		} else {
-			m.mode = modeListNarrow
-		}
+		m.setDefaultMode()
 		return m, nil
 	}
 	formModel := m.confirmForm
@@ -519,18 +526,10 @@ func (m model) View() string {
 		parts = append(parts, m.confirmForm.View())
 		return strings.Join(parts, "\n")
 	case modeFilter:
-		if m.isWide() {
-			parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane()))
-		} else {
-			parts = append(parts, m.renderListPane())
-		}
+		parts = append(parts, m.renderMainView())
 		parts = append(parts, m.renderFilterInput())
 	default:
-		if m.isWide() {
-			parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, m.renderListPane(), m.renderPreviewPane()))
-		} else {
-			parts = append(parts, m.renderListPane())
-		}
+		parts = append(parts, m.renderMainView())
 	}
 	parts = append(parts, statusLine, helpView)
 	return strings.Join(parts, "\n")
@@ -573,12 +572,12 @@ func (m *model) filteredGroups() []session.SessionGroup {
 
 func (m *model) nextStatusFilter() {
 	switch m.statusFilter {
-	case "all":
-		m.statusFilter = "active"
-	case "active":
-		m.statusFilter = "archived"
+	case session.StatusFilterAll:
+		m.statusFilter = session.StatusFilterActive
+	case session.StatusFilterActive:
+		m.statusFilter = session.StatusFilterArchived
 	default:
-		m.statusFilter = "all"
+		m.statusFilter = session.StatusFilterAll
 	}
 	m.reloadList()
 }
@@ -621,7 +620,7 @@ func (m *model) syncPreviewWithReset(reset bool) {
 	offset := m.viewport.YOffset
 	doc, err := m.cache.Load(m.current.Parent)
 	if err != nil {
-		m.err = err
+		m.errorMsg = err.Error()
 		return
 	}
 	m.currentDoc = doc
@@ -739,7 +738,7 @@ func (m model) isWide() bool {
 
 func (m model) renderListPane() string {
 	title := "Sessions"
-	if m.statusFilter != "all" {
+	if m.statusFilter != session.StatusFilterAll {
 		title += " [" + m.statusFilter + "]"
 	}
 	totalItems := len(m.list.VisibleItems())
@@ -827,9 +826,6 @@ func (m model) renderStatusLine() string {
 }
 
 func (m model) renderErrorLine() string {
-	if m.err != nil {
-		return errorStyle.Width(m.width).Render(m.err.Error())
-	}
 	if m.errorMsg != "" {
 		return errorStyle.Width(m.width).Render(m.errorMsg)
 	}
@@ -978,7 +974,7 @@ func (m *model) handleMouseClick(msg tea.MouseMsg) tea.Cmd {
 			m.mode = modePreview
 			return nil
 		}
-		if wasSelected && len(group.Children) > 0 {
+		if wasSelected && group.HasChildren() {
 			m.current = group
 			m.loadChildren(group.Children)
 			m.mode = modeGroupDetail
