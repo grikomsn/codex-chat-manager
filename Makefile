@@ -5,8 +5,11 @@ BIN_DIR := ./bin
 OUT := $(BIN_DIR)/$(BINARY)
 CODEX_HOME ?= $(HOME)/.codex
 ARGS ?=
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -s -w -X github.com/grikomsn/codex-chat-manager/internal/cli.Version=$(VERSION)
+COMPLETIONS_DIR := completions
 
-.PHONY: help build install run tui list archive unarchive delete resume fmt tidy test test-race vet verify check clean
+.PHONY: help build install run tui list archive unarchive delete resume fmt tidy test test-race vet verify check clean version completions
 
 help:
 	@printf '%s\n' \
@@ -20,6 +23,8 @@ help:
 		'  make unarchive   Run sessions unarchive with ARGS="--id ..."' \
 		'  make delete      Run sessions delete with ARGS="--id ... --yes"' \
 		'  make resume      Run sessions resume with ARGS="--id ..."' \
+		'  make version     Print the version string' \
+		'  make completions Generate shell completions (bash/zsh/fish)' \
 		'  make fmt         Run gofmt on cmd/ and internal/' \
 		'  make tidy        Run go mod tidy' \
 		'  make test        Run go test ./...' \
@@ -31,7 +36,16 @@ help:
 
 build:
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -o $(OUT) $(CMD)
+	$(GO) build -ldflags '$(LDFLAGS)' -o $(OUT) $(CMD)
+
+version:
+	@echo $(VERSION)
+
+completions:
+	@mkdir -p $(COMPLETIONS_DIR)
+	$(GO) run $(CMD) completion bash > $(COMPLETIONS_DIR)/bash
+	$(GO) run $(CMD) completion zsh > $(COMPLETIONS_DIR)/zsh
+	$(GO) run $(CMD) completion fish > $(COMPLETIONS_DIR)/fish
 
 install:
 	$(GO) install $(CMD)

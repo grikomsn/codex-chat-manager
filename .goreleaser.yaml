@@ -21,6 +21,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X github.com/grikomsn/codex-chat-manager/internal/cli.Version={{ .Tag }}
 
 archives:
   - id: release
