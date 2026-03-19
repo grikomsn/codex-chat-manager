@@ -33,6 +33,17 @@ export function statusIcon(
   return { source: Icon.CircleFilled, tintColor: Color.Green };
 }
 
+export interface StatusMeta {
+  label: string;
+  icon: { source: Icon; tintColor: Color };
+}
+
+export function getStatusMeta(status: Status, mixedStatus = false): StatusMeta {
+  const label = statusLabel(status, mixedStatus);
+  const icon = statusIcon(status, mixedStatus);
+  return { label, icon };
+}
+
 export function groupKeywords(group: SessionGroup): string[] {
   const values = [
     group.parent.id,

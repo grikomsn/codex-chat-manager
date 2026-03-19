@@ -46,7 +46,8 @@ export async function parsePreviewFromFile(
     crlfDelay: Number.POSITIVE_INFINITY,
   });
 
-  for await (const line of reader) {
+  try {
+    for await (const line of reader) {
     const trimmed = line.trim();
     if (!trimmed) {
       continue;
@@ -73,6 +74,9 @@ export async function parsePreviewFromFile(
     if (envelope.type === "response_item") {
       document.blocks.push(...responseBlocks(envelope.payload));
     }
+  }
+  } finally {
+    reader.close();
   }
 
   if (document.blocks.length === 0) {
