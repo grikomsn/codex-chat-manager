@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
-	"github.com/grikomsn/codex-chat-manager/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -22,14 +19,10 @@ Examples:
   codex-chat-manager sessions resume --id abc123`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if resumeID == "" {
-			return fmt.Errorf("resume requires --id")
-		}
-		cfg, err := session.ResolveConfig(codexHome)
+		store, err := resolveStore(codexHome)
 		if err != nil {
 			return err
 		}
-		store := session.NewStore(cfg)
 		return store.Resume(nil, resumeID)
 	},
 }

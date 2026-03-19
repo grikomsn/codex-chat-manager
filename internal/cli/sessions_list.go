@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -31,16 +29,15 @@ Examples:
   codex-chat-manager sessions list --include-children`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := session.ResolveConfig(codexHome)
+		store, err := resolveStore(codexHome)
 		if err != nil {
 			return err
 		}
-		store := session.NewStore(cfg)
 		snapshot, err := store.LoadSnapshot()
 		if err != nil {
 			return err
 		}
-		filtered := filterGroups(snapshot.Groups, listStatusFilter, listTextFilter, listIncludeChildren)
+		filtered := session.FilterGroups(snapshot.Groups, listStatusFilter, listTextFilter, listIncludeChildren)
 		if listJSON {
 			return printJSON(cmd.OutOrStdout(), filtered)
 		}
@@ -49,51 +46,11 @@ Examples:
 }
 
 func init() {
-	listCmd.Flags().StringVarP(&listStatusFilter, "status", "s", "all", "filter by status: all|active|archived")
+	listCmd.Flags().StringVarP(&listStatusFilter, "status", "s", session.StatusFilterAll, "filter by status: all|active|archived")
 	listCmd.Flags().StringVarP(&listTextFilter, "filter", "f", "", "text filter for session title, ID, or CWD")
 	listCmd.Flags().BoolVar(&listIncludeChildren, "include-children", false, "include grouped child sessions in output")
 	listCmd.Flags().BoolVarP(&listJSON, "json", "j", false, "render as JSON")
 	sessionsCmd.AddCommand(listCmd)
-}
-
-func filterGroups(groups []session.SessionGroup, statusFilter, text string, includeChildren bool) []session.SessionGroup {
-	text = strings.ToLower(strings.TrimSpace(text))
-	statusFilter = strings.ToLower(statusFilter)
-	filtered := make([]session.SessionGroup, 0, len(groups))
-	for _, group := range groups {
-		if statusFilter != "all" && statusFilter != "" {
-			if string(group.Status) != statusFilter && !(group.MixedStatus && statusFilter == "active") && !(group.MixedStatus && statusFilter == "archived") {
-				continue
-			}
-		}
-		if text != "" && !groupMatches(group, text, includeChildren) {
-			continue
-		}
-		filtered = append(filtered, group)
-	}
-	return filtered
-}
-
-func groupMatches(group session.SessionGroup, text string, includeChildren bool) bool {
-	fields := []string{
-		group.Parent.ID,
-		group.Parent.DisplayTitle(),
-		group.Parent.CWD,
-		group.Parent.Source,
-		group.Parent.AgentNickname,
-		group.Parent.AgentRole,
-	}
-	if includeChildren {
-		for _, child := range group.Children {
-			fields = append(fields, child.ID, child.DisplayTitle(), child.CWD, child.AgentNickname, child.AgentRole)
-		}
-	}
-	for _, field := range fields {
-		if strings.Contains(strings.ToLower(field), text) {
-			return true
-		}
-	}
-	return false
 }
 
 func printGroupTable(stdout io.Writer, groups []session.SessionGroup, includeChildren bool) error {
@@ -121,10 +78,4 @@ func printGroupTable(stdout io.Writer, groups []session.SessionGroup, includeChi
 		}
 	}
 	return tw.Flush()
-}
-
-func printJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }

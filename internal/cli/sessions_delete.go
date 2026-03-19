@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"github.com/grikomsn/codex-chat-manager/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -26,17 +25,13 @@ Examples:
   codex-chat-manager sessions delete --id abc123 --id def456 --yes`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(deleteIDs) == 0 {
-			return fmt.Errorf("delete requires at least one --id")
-		}
 		if !deleteYes {
 			return fmt.Errorf("delete requires --yes to confirm")
 		}
-		cfg, err := session.ResolveConfig(codexHome)
+		store, err := resolveStore(codexHome)
 		if err != nil {
 			return err
 		}
-		store := session.NewStore(cfg)
 		plan, err := store.Delete(deleteIDs)
 		if err != nil {
 			if deleteJSON {

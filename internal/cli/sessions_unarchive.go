@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
-	"github.com/grikomsn/codex-chat-manager/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -25,14 +22,10 @@ Examples:
   codex-chat-manager sessions unarchive --id abc123 --json`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(unarchiveIDs) == 0 {
-			return fmt.Errorf("unarchive requires at least one --id")
-		}
-		cfg, err := session.ResolveConfig(codexHome)
+		store, err := resolveStore(codexHome)
 		if err != nil {
 			return err
 		}
-		store := session.NewStore(cfg)
 		plan, err := store.Unarchive(unarchiveIDs)
 		if err != nil {
 			return err
