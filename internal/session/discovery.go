@@ -98,6 +98,13 @@ func loadSnapshotImpl(cfg Config) (Snapshot, error) {
 	records = append(records, archived...)
 	slog.Debug("snapshot records loaded", "active", len(active), "archived", len(archived), "total", len(records))
 
+	resolver := newProjectResolver()
+	for i := range records {
+		key, label := resolver.Resolve(records[i].CWD)
+		records[i].ProjectKey = key
+		records[i].Project = label
+	}
+
 	byID := make(map[string]SessionRecord, len(records))
 	for _, record := range records {
 		byID[record.ID] = record
@@ -232,13 +239,13 @@ func readRolloutHead(path string) (rolloutMeta, error) {
 			var env recordEnvelope
 			if json.Unmarshal([]byte(trimmed), &env) == nil {
 				switch env.Type {
-				case RecordTypeSessionMeta:
+				case RecordTypeSessionMeta, RecordTypeSessionMetaHyphen:
 					if meta.id == "" {
 						readSessionMeta(&meta, env.Payload)
 					}
-				case RecordTypeEventMsg:
+				case RecordTypeEventMsg, RecordTypeEventMsgHyphen:
 					readEventTitle(&meta, env.Payload)
-				case RecordTypeResponseItem:
+				case RecordTypeResponseItem, RecordTypeResponseItemHyphen:
 					readResponseMessage(&meta, env.Payload)
 				}
 			}

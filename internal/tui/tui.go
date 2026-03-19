@@ -33,6 +33,8 @@ const (
 	colorTitle  = "#f7f2e8"
 	colorSubtle = "#9aa4b2"
 	colorError  = "#ff5f5f"
+	colorActive = "#3fb950"
+	colorMixed  = "#d29922"
 )
 
 type mode int
@@ -102,10 +104,20 @@ type item struct {
 
 func (i item) Title() string { return i.group.Parent.DisplayTitle() }
 func (i item) Description() string {
-	return fmt.Sprintf("%s | %s | %s", i.group.Status, i.group.Parent.Subtitle(), i.group.AggregateAt.Format("2006-01-02 15:04"))
+	return fmt.Sprintf("%s | %s | %s",
+		i.group.Status,
+		i.group.Parent.Subtitle(),
+		i.group.AggregateAt.Format("2006-01-02 15:04"),
+	)
 }
 func (i item) FilterValue() string {
-	return strings.Join([]string{i.group.Parent.ID, i.group.Parent.DisplayTitle(), i.group.Parent.CWD}, " ")
+	return strings.Join([]string{
+		i.group.Parent.ID,
+		i.group.Parent.DisplayTitle(),
+		i.group.Parent.CWD,
+		i.group.Parent.Project,
+		i.group.Parent.Source,
+	}, " ")
 }
 
 type clearErrorMsg struct{}
@@ -1412,15 +1424,120 @@ func (m model) renderScrollableList(items []list.Item, width, height, selectedIn
 }
 
 func renderSessionItem(listItem item, width int, selected bool) (string, string) {
-	textWidth := max(1, width-itemStyles.NormalTitle.GetPaddingLeft()-itemStyles.NormalTitle.GetPaddingRight())
-	title := ansi.Truncate(listItem.Title(), textWidth, "…")
+	titleStyle := itemStyles.NormalTitle
+	descStyle := itemStyles.NormalDesc
+	if selected {
+		titleStyle = itemStyles.SelectedTitle
+		descStyle = itemStyles.SelectedDesc
+	}
+
+	titleStyleInner := titleStyle.Copy().
+		Padding(0).
+		UnsetMargins().
+		UnsetBorderLeft().
+		UnsetWidth().
+		UnsetHeight()
+	descStyleInner := descStyle.Copy().
+		Padding(0).
+		UnsetMargins().
+		UnsetBorderLeft().
+		UnsetWidth().
+		UnsetHeight()
+
+	gutter := " "
+	if selected {
+		borderColor := titleStyle.GetBorderLeftForeground()
+		gutter = lipgloss.NewStyle().Foreground(borderColor).Render("│")
+	}
+	gutterWidth := ansi.StringWidth(gutter)
+
+	indicatorStyle := titleStyleInner
+	titleTextStyle := titleStyleInner
+	prefixStyle := titleTextStyle.Copy().Foreground(lipgloss.Color(colorSubtle))
+
+	project := listItem.group.Parent.Project
+	if project == "" {
+		project = "unknown"
+	}
+	env := strings.TrimSpace(listItem.group.Parent.Source)
+	if env == "" {
+		env = "unknown"
+	}
+	env = strings.Split(env, ",")[0]
+
+	prefixRaw := abbrevLabel(project, 10) + "/" + abbrevLabel(env, 6) + " "
+	prefix := prefixStyle.Render(prefixRaw)
+
+	dot := renderStatusDot(indicatorStyle, listItem.group.Status)
+	dotWidth := ansi.StringWidth(dot)
+	prefixWidth := ansi.StringWidth(prefix)
+
+	reservedRight := 1
+	lineWidth := max(1, width-reservedRight)
+
+	// Separator is one space after the dot.
+	titleWidth := max(1, lineWidth-gutterWidth-dotWidth-1-prefixWidth)
+	title := ansi.Truncate(listItem.Title(), titleWidth, "…")
 	description := listItem.Description()
 	if line := strings.Split(description, "\n"); len(line) > 0 {
 		description = line[0]
 	}
-	description = ansi.Truncate(description, textWidth, "…")
-	if selected {
-		return itemStyles.SelectedTitle.Render(title), itemStyles.SelectedDesc.Render(description)
+
+	titleLine := gutter +
+		dot +
+		" " +
+		prefix +
+		titleTextStyle.Render(title)
+	titleLine = padLineToWidth(titleLine, lineWidth)
+	titleLine += strings.Repeat(" ", reservedRight)
+
+	descLeadStyle := descStyleInner
+	descTextStyle := descStyleInner
+	lead := descLeadStyle.Render(" ")
+	leadWidth := ansi.StringWidth(lead)
+	descWidth := max(1, lineWidth-gutterWidth-leadWidth-1)
+	description = ansi.Truncate(description, descWidth, "…")
+
+	descLine := gutter + lead + " " + descTextStyle.Render(description)
+	descLine = padLineToWidth(descLine, lineWidth)
+	descLine += strings.Repeat(" ", reservedRight)
+	return titleLine, descLine
+}
+
+func renderStatusDot(base lipgloss.Style, status session.Status) string {
+	color := colorSubtle
+	switch status {
+	case session.StatusActive:
+		color = colorActive
+	case session.StatusMixed:
+		color = colorMixed
+	case session.StatusArchived:
+		color = colorSubtle
 	}
-	return itemStyles.NormalTitle.Render(title), itemStyles.NormalDesc.Render(description)
+	return base.Copy().Foreground(lipgloss.Color(color)).Render("●")
+}
+
+func padLineToWidth(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	w := ansi.StringWidth(line)
+	if w == width {
+		return line
+	}
+	if w < width {
+		return line + strings.Repeat(" ", width-w)
+	}
+	return ansi.Truncate(line, width, "")
+}
+
+func abbrevLabel(s string, maxWidth int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "unknown"
+	}
+	if maxWidth <= 0 {
+		return ""
+	}
+	return ansi.Truncate(s, maxWidth, "…")
 }

@@ -15,9 +15,12 @@ const (
 )
 
 const (
-	RecordTypeSessionMeta  = "session_meta"
-	RecordTypeEventMsg     = "event_msg"
-	RecordTypeResponseItem = "response_item"
+	RecordTypeSessionMeta        = "session_meta"
+	RecordTypeSessionMetaHyphen  = "session-meta"
+	RecordTypeEventMsg           = "event_msg"
+	RecordTypeEventMsgHyphen     = "event-msg"
+	RecordTypeResponseItem       = "response_item"
+	RecordTypeResponseItemHyphen = "response-item"
 )
 
 type SessionRecord struct {
@@ -27,6 +30,8 @@ type SessionRecord struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 	CWD           string    `json:"cwd,omitempty"`
+	Project       string    `json:"project,omitempty"`
+	ProjectKey    string    `json:"-"`
 	Title         string    `json:"title,omitempty"`
 	Source        string    `json:"source,omitempty"`
 	AgentNickname string    `json:"agent_nickname,omitempty"`

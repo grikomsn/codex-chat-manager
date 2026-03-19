@@ -55,11 +55,16 @@ func init() {
 
 func printGroupTable(stdout io.Writer, groups []session.SessionGroup, includeChildren bool) error {
 	tw := tabwriter.NewWriter(stdout, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(tw, "STATUS\tUPDATED\tID\tTITLE\tCWD\tCHILDREN")
+	fmt.Fprintln(tw, "STATUS\tUPDATED\tPROJECT\tID\tTITLE\tCWD\tCHILDREN")
 	for _, group := range groups {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\n",
-			group.Status,
+		project := group.Parent.Project
+		if project == "" {
+			project = "unknown"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
+			formatStatus(group.Status),
 			group.AggregateAt.Format(time.RFC3339),
+			project,
 			group.Parent.ID,
 			group.Parent.DisplayTitle(),
 			group.Parent.Subtitle(),
@@ -67,9 +72,14 @@ func printGroupTable(stdout io.Writer, groups []session.SessionGroup, includeChi
 		)
 		if includeChildren {
 			for _, child := range group.Children {
-				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t0\n",
-					child.Status,
+				childProject := child.Project
+				if childProject == "" {
+					childProject = "unknown"
+				}
+				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t0\n",
+					formatStatus(child.Status),
 					child.UpdatedAt.Format(time.RFC3339),
+					childProject,
 					child.ID,
 					child.DisplayTitle(),
 					child.Subtitle(),
@@ -78,4 +88,17 @@ func printGroupTable(stdout io.Writer, groups []session.SessionGroup, includeChi
 		}
 	}
 	return tw.Flush()
+}
+
+func formatStatus(status session.Status) string {
+	switch status {
+	case session.StatusActive:
+		return "● active"
+	case session.StatusMixed:
+		return "◍ mixed"
+	case session.StatusArchived:
+		return "○ archived"
+	default:
+		return string(status)
+	}
 }

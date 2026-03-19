@@ -9,6 +9,7 @@ export interface SessionRecord {
   created_at: string;
   updated_at: string;
   cwd?: string;
+  project?: string;
   title?: string;
   source?: string;
   agent_nickname?: string;

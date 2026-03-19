@@ -34,7 +34,7 @@ func FilterGroups(groups []SessionGroup, statusFilter, text string, includeChild
 		}
 		filtered = append(filtered, group)
 	}
-	return filtered
+	return orderGroupsByProjectStatusRecency(filtered)
 }
 
 func groupContains(group SessionGroup, text string, includeChildren bool) bool {
@@ -42,13 +42,14 @@ func groupContains(group SessionGroup, text string, includeChildren bool) bool {
 		group.Parent.ID,
 		group.Parent.DisplayTitle(),
 		group.Parent.CWD,
+		group.Parent.Project,
 		group.Parent.Source,
 		group.Parent.AgentNickname,
 		group.Parent.AgentRole,
 	}
 	if includeChildren {
 		for _, child := range group.Children {
-			fields = append(fields, child.ID, child.DisplayTitle(), child.CWD, child.AgentNickname, child.AgentRole)
+			fields = append(fields, child.ID, child.DisplayTitle(), child.CWD, child.Project, child.AgentNickname, child.AgentRole)
 		}
 	}
 	for _, field := range fields {
