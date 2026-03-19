@@ -181,7 +181,17 @@ type model struct {
 	confirmTitle     string
 	sized            bool
 	showSystem       bool
+	dragTarget       scrollDragTarget
 }
+
+type scrollDragTarget int
+
+const (
+	scrollDragNone scrollDragTarget = iota
+	scrollDragList
+	scrollDragChild
+	scrollDragPreview
+)
 
 func (m *model) setDefaultMode() {
 	if m.isWide() {
@@ -947,6 +957,18 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	if m.mode == modeConfirm || m.width == 0 || m.height == 0 {
 		return nil, false
 	}
+
+	if m.dragTarget != scrollDragNone {
+		switch msg.Action {
+		case tea.MouseActionMotion:
+			m.handleScrollbarDrag(msg)
+			return nil, true
+		case tea.MouseActionRelease:
+			m.dragTarget = scrollDragNone
+			return nil, true
+		}
+	}
+
 	switch msg.Button {
 	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
 		return m.handleMouseWheel(msg), true
@@ -958,6 +980,48 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	default:
 		return nil, true
 	}
+}
+
+func scrollbarHitRow(pane box, componentWidth, componentHeight int, msg tea.MouseMsg) (int, bool) {
+	if componentWidth <= 0 || componentHeight <= 0 {
+		return 0, false
+	}
+	content := pane.contentRect(chromeStyle)
+	sbX := content.x + (componentWidth - 1)
+	sbY := content.y + paneHeaderHeight
+	if msg.X != sbX {
+		return 0, false
+	}
+	row := msg.Y - sbY
+	if row < 0 || row >= componentHeight {
+		return 0, false
+	}
+	return row, true
+}
+
+func scrollbarPercentFromRow(row, height, contentLines, visibleLines int) float64 {
+	if contentLines <= visibleLines || height <= 0 {
+		return 0
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= height {
+		row = height - 1
+	}
+
+	thumbHeight := max(1, height*visibleLines/contentLines)
+	if thumbHeight > height {
+		thumbHeight = height
+	}
+	trackSpace := height - thumbHeight
+	if trackSpace <= 0 {
+		return 0
+	}
+
+	thumbPos := row - (thumbHeight / 2)
+	thumbPos = clamp(thumbPos, 0, trackSpace)
+	return float64(thumbPos) / float64(trackSpace)
 }
 
 func (m *model) handleMouseWheel(msg tea.MouseMsg) tea.Cmd {
@@ -993,6 +1057,11 @@ func (m *model) handleMouseWheel(msg tea.MouseMsg) tea.Cmd {
 
 func (m *model) handleMouseClick(msg tea.MouseMsg) tea.Cmd {
 	layout := m.layout()
+
+	if m.maybeStartScrollbarDrag(layout, msg) {
+		return nil
+	}
+
 	switch m.mode {
 	case modePreview:
 		return nil
@@ -1039,6 +1108,166 @@ func (m *model) handleMouseClick(msg tea.MouseMsg) tea.Cmd {
 		m.syncPreview()
 	}
 	return nil
+}
+
+func (m *model) maybeStartScrollbarDrag(layout viewLayout, msg tea.MouseMsg) bool {
+	switch m.mode {
+	case modePreview:
+		return m.startPreviewScrollbarDrag(layout, msg)
+	case modeGroupDetail:
+		if m.isWide() && m.startPreviewScrollbarDrag(layout, msg) {
+			return true
+		}
+		return m.startChildScrollbarDrag(layout, msg)
+	default:
+		if m.isWide() && m.startPreviewScrollbarDrag(layout, msg) {
+			return true
+		}
+		return m.startListScrollbarDrag(layout, msg)
+	}
+}
+
+func (m *model) startListScrollbarDrag(layout viewLayout, msg tea.MouseMsg) bool {
+	totalItems := len(m.list.VisibleItems())
+	visibleItems := m.visibleListItemCount()
+	if totalItems <= visibleItems || visibleItems <= 0 {
+		return false
+	}
+	row, ok := scrollbarHitRow(layout.listPane, m.list.Width(), m.list.Height(), msg)
+	if !ok {
+		return false
+	}
+	percent := scrollbarPercentFromRow(row, m.list.Height(), totalItems, visibleItems)
+	m.scrollListToPercent(percent)
+	m.dragTarget = scrollDragList
+	return true
+}
+
+func (m *model) startChildScrollbarDrag(layout viewLayout, msg tea.MouseMsg) bool {
+	items := m.childList.VisibleItems()
+	perPage := m.childList.Paginator.PerPage
+	if len(items) == 0 || len(items) <= perPage || perPage <= 0 {
+		return false
+	}
+	row, ok := scrollbarHitRow(layout.childPane, m.childList.Width(), m.childList.Height(), msg)
+	if !ok {
+		return false
+	}
+	percent := scrollbarPercentFromRow(row, m.childList.Height(), len(items), perPage)
+	m.scrollChildToPercent(percent)
+	m.dragTarget = scrollDragChild
+	return true
+}
+
+func (m *model) startPreviewScrollbarDrag(layout viewLayout, msg tea.MouseMsg) bool {
+	totalLines := m.viewport.TotalLineCount()
+	visibleLines := m.viewport.Height
+	if totalLines <= visibleLines || visibleLines <= 0 {
+		return false
+	}
+	row, ok := scrollbarHitRow(layout.previewPane, m.viewport.Width, m.viewport.Height, msg)
+	if !ok {
+		return false
+	}
+	percent := scrollbarPercentFromRow(row, m.viewport.Height, totalLines, visibleLines)
+	m.scrollPreviewToPercent(percent)
+	m.dragTarget = scrollDragPreview
+	return true
+}
+
+func (m *model) handleScrollbarDrag(msg tea.MouseMsg) {
+	layout := m.layout()
+	switch m.dragTarget {
+	case scrollDragList:
+		totalItems := len(m.list.VisibleItems())
+		visibleItems := m.visibleListItemCount()
+		if totalItems <= visibleItems || visibleItems <= 0 {
+			return
+		}
+		row, ok := scrollbarHitRow(layout.listPane, m.list.Width(), m.list.Height(), msg)
+		if !ok {
+			return
+		}
+		percent := scrollbarPercentFromRow(row, m.list.Height(), totalItems, visibleItems)
+		m.scrollListToPercent(percent)
+	case scrollDragChild:
+		items := m.childList.VisibleItems()
+		perPage := m.childList.Paginator.PerPage
+		if len(items) == 0 || len(items) <= perPage || perPage <= 0 {
+			return
+		}
+		row, ok := scrollbarHitRow(layout.childPane, m.childList.Width(), m.childList.Height(), msg)
+		if !ok {
+			return
+		}
+		percent := scrollbarPercentFromRow(row, m.childList.Height(), len(items), perPage)
+		m.scrollChildToPercent(percent)
+	case scrollDragPreview:
+		totalLines := m.viewport.TotalLineCount()
+		visibleLines := m.viewport.Height
+		if totalLines <= visibleLines || visibleLines <= 0 {
+			return
+		}
+		row, ok := scrollbarHitRow(layout.previewPane, m.viewport.Width, m.viewport.Height, msg)
+		if !ok {
+			return
+		}
+		percent := scrollbarPercentFromRow(row, m.viewport.Height, totalLines, visibleLines)
+		m.scrollPreviewToPercent(percent)
+	}
+}
+
+func (m *model) scrollListToPercent(percent float64) {
+	maxScroll := m.maxListScroll()
+	if maxScroll <= 0 {
+		m.listScroll = 0
+		return
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	m.listScroll = clamp(int(percent*float64(maxScroll)+0.5), 0, maxScroll)
+}
+
+func (m *model) scrollChildToPercent(percent float64) {
+	items := m.childList.VisibleItems()
+	if len(items) == 0 {
+		return
+	}
+	maxIndex := len(items) - 1
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	index := clamp(int(percent*float64(maxIndex)+0.5), 0, maxIndex)
+	m.childList.Select(index)
+	if child, ok := m.childList.SelectedItem().(item); ok {
+		group := child.group
+		m.current = &group
+		m.syncPreview()
+	}
+}
+
+func (m *model) scrollPreviewToPercent(percent float64) {
+	totalLines := m.viewport.TotalLineCount()
+	visibleLines := m.viewport.Height
+	maxOffset := max(0, totalLines-visibleLines)
+	if maxOffset <= 0 {
+		m.viewport.SetYOffset(0)
+		return
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	m.viewport.SetYOffset(clamp(int(percent*float64(maxOffset)+0.5), 0, maxOffset))
 }
 
 func (m *model) scrollList(msg tea.MouseMsg) {

@@ -214,6 +214,125 @@ func TestMouseClickOpensPreviewInNarrowMode(t *testing.T) {
 	}
 }
 
+func TestMouseClickScrollbarScrollsListWithoutOpeningPreview(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithGroups(t, 24, false, false)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 70
+	m.height = 14
+	m.resize()
+	if m.mode != modeListNarrow {
+		t.Fatalf("expected narrow list mode, got %v", m.mode)
+	}
+	layout := m.layout()
+	content := layout.listPane.contentRect(chromeStyle)
+	sbX := content.x + (m.list.Width() - 1)
+	sbY := content.y + paneHeaderHeight
+
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      sbX,
+		Y:      sbY + m.list.Height() - 1,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = updated.(model)
+
+	if m.mode != modeListNarrow {
+		t.Fatalf("expected scrollbar click to keep list mode, got %v", m.mode)
+	}
+	if m.listScroll == 0 {
+		t.Fatal("expected scrollbar click to scroll the list")
+	}
+}
+
+func TestMouseClickScrollbarScrollsPreviewInWideMode(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithGroups(t, 1, false, true)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 140
+	m.height = 20
+	m.resize()
+	group := m.groups[0]
+	m.current = &group
+	m.syncPreview()
+	layout := m.layout()
+	content := layout.previewPane.contentRect(chromeStyle)
+	sbX := content.x + (m.viewport.Width - 1)
+	sbY := content.y + paneHeaderHeight
+
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      sbX,
+		Y:      sbY + m.viewport.Height - 1,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = updated.(model)
+
+	if m.viewport.YOffset == 0 {
+		t.Fatal("expected preview scrollbar click to scroll the viewport")
+	}
+}
+
+func TestMouseDragScrollbarScrollsPreview(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithGroups(t, 1, false, true)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 140
+	m.height = 18
+	m.resize()
+	group := m.groups[0]
+	m.current = &group
+	m.syncPreview()
+
+	layout := m.layout()
+	content := layout.previewPane.contentRect(chromeStyle)
+	sbX := content.x + (m.viewport.Width - 1)
+	sbY := content.y + paneHeaderHeight
+
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      sbX,
+		Y:      sbY,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = updated.(model)
+	if m.dragTarget != scrollDragPreview {
+		t.Fatalf("expected preview drag target, got %v", m.dragTarget)
+	}
+	start := m.viewport.YOffset
+
+	updated, _ = m.Update(tea.MouseMsg{
+		X:      sbX,
+		Y:      sbY + m.viewport.Height - 1,
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonLeft,
+	})
+	m = updated.(model)
+	if m.viewport.YOffset <= start {
+		t.Fatalf("expected drag motion to increase offset, got %d <= %d", m.viewport.YOffset, start)
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{
+		X:      sbX,
+		Y:      sbY + m.viewport.Height - 1,
+		Action: tea.MouseActionRelease,
+		Button: tea.MouseButtonNone,
+	})
+	m = updated.(model)
+	if m.dragTarget != scrollDragNone {
+		t.Fatalf("expected drag to stop on release, got %v", m.dragTarget)
+	}
+}
+
 func TestViewFitsTerminalHeightOnLaunch(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithGroups(t, 6, false, true)
