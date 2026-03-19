@@ -654,14 +654,32 @@ func (m *model) resize() {
 }
 
 func (m *model) reloadList() {
+	prevIndex := m.list.Index()
+	prevID := ""
+	if selected := m.selectedGroup(); selected != nil {
+		prevID = selected.Parent.ID
+	}
+
 	filtered := m.filteredGroups()
 	items := make([]list.Item, 0, len(filtered))
 	for _, group := range filtered {
 		items = append(items, item{group: group})
 	}
 	m.list.SetItems(items)
-	if len(items) > 0 && m.list.SelectedItem() == nil {
-		m.list.Select(0)
+	if len(items) > 0 {
+		selectedIndex := -1
+		if prevID != "" {
+			for i, it := range items {
+				if got, ok := it.(item); ok && got.group.Parent.ID == prevID {
+					selectedIndex = i
+					break
+				}
+			}
+		}
+		if selectedIndex == -1 {
+			selectedIndex = min(prevIndex, len(items)-1)
+		}
+		m.list.Select(selectedIndex)
 	}
 	m.clampListScroll()
 	if selected := m.selectedGroup(); selected != nil {

@@ -158,6 +158,52 @@ func TestDoubleTapDeleteBlockedDoesNotArm(t *testing.T) {
 	}
 }
 
+func TestDeleteClampsSelectionToNewLastItem(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithGroups(t, 3, false, false)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 100
+	m.height = 30
+	m.resize()
+
+	ids := []string{
+		"11111111-1111-1111-1111-000000000001",
+		"11111111-1111-1111-1111-000000000002",
+		"11111111-1111-1111-1111-000000000003",
+	}
+	if _, err := m.store.Archive(ids); err != nil {
+		t.Fatalf("Archive() error = %v", err)
+	}
+	if err := m.refresh(); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+
+	m.statusFilter = session.StatusFilterArchived
+	m.reloadList()
+
+	items := m.list.VisibleItems()
+	if len(items) != 3 {
+		t.Fatalf("expected 3 archived items, got %d", len(items))
+	}
+	m.list.Select(2)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	items = m.list.VisibleItems()
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items after delete, got %d", len(items))
+	}
+	if got := m.list.Index(); got != 1 {
+		t.Fatalf("expected selection to clamp to new last index=1, got %d", got)
+	}
+}
+
 func TestSyncPreviewHidesSystemInstructionsByDefault(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithContext(t)
