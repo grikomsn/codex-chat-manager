@@ -155,30 +155,31 @@ type viewLayout struct {
 }
 
 type model struct {
-	cfg          session.Config
-	store        *session.Store
-	cache        *session.PreviewCache
-	keys         keyMap
-	help         help.Model
-	list         list.Model
-	childList    list.Model
-	viewport     viewport.Model
-	filterInput  textinput.Model
-	mode         mode
-	width        int
-	height       int
-	listScroll   int
-	statusFilter string
-	groups       []session.SessionGroup
-	selection    map[string]struct{}
-	current      *session.SessionGroup
-	currentDoc   session.PreviewDocument
-	errorMsg     string
-	confirmForm  *huh.Form
-	confirmAct   session.ActionType
-	confirmIDs   []string
-	sized        bool
-	showSystem   bool
+	cfg              session.Config
+	store            *session.Store
+	cache            *session.PreviewCache
+	markdownRenderer *session.MarkdownRenderer
+	keys             keyMap
+	help             help.Model
+	list             list.Model
+	childList        list.Model
+	viewport         viewport.Model
+	filterInput      textinput.Model
+	mode             mode
+	width            int
+	height           int
+	listScroll       int
+	statusFilter     string
+	groups           []session.SessionGroup
+	selection        map[string]struct{}
+	current          *session.SessionGroup
+	currentDoc       session.PreviewDocument
+	errorMsg         string
+	confirmForm      *huh.Form
+	confirmAct       session.ActionType
+	confirmIDs       []string
+	sized            bool
+	showSystem       bool
 }
 
 func (m *model) setDefaultMode() {
@@ -275,18 +276,19 @@ func initialModel(cfg session.Config) (model, error) {
 	vp := viewport.New(0, 0)
 	keys := newKeyMap()
 	m := model{
-		cfg:          cfg,
-		store:        store,
-		cache:        cache,
-		keys:         keys,
-		help:         help.New(),
-		list:         l,
-		childList:    cl,
-		viewport:     vp,
-		filterInput:  ti,
-		statusFilter: session.StatusFilterAll,
-		groups:       snapshot.Groups,
-		selection:    make(map[string]struct{}),
+		cfg:              cfg,
+		store:            store,
+		cache:            cache,
+		markdownRenderer: session.NewMarkdownRenderer(),
+		keys:             keys,
+		help:             help.New(),
+		list:             l,
+		childList:        cl,
+		viewport:         vp,
+		filterInput:      ti,
+		statusFilter:     session.StatusFilterAll,
+		groups:           snapshot.Groups,
+		selection:        make(map[string]struct{}),
 	}
 	m.reloadList()
 	return m, nil
@@ -303,6 +305,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sized = true
 		m.width = msg.Width
 		m.height = msg.Height
+		m.markdownRenderer.ClearCache()
 		m.resize()
 		m.syncPreviewPreserveOffset()
 		if firstSize {
@@ -624,7 +627,7 @@ func (m *model) syncPreviewWithReset(reset bool) {
 		return
 	}
 	m.currentDoc = doc
-	m.viewport.SetContent(session.RenderPreview(doc, m.viewport.Width, m.showSystem))
+	m.viewport.SetContent(session.RenderPreview(doc, m.viewport.Width, m.showSystem, m.markdownRenderer))
 	if reset {
 		m.viewport.GotoTop()
 		return
@@ -810,7 +813,9 @@ func (m model) renderPane(title, body string, width, height int, scrollbar strin
 
 	var content string
 	if scrollbar != "" {
-		content = lipgloss.JoinHorizontal(lipgloss.Top, body, scrollbar)
+		contentWidth := max(1, width-1)
+		paddedBody := lipgloss.NewStyle().Width(contentWidth).Height(height).Render(body)
+		content = lipgloss.JoinHorizontal(lipgloss.Top, paddedBody, scrollbar)
 	} else {
 		content = body
 	}

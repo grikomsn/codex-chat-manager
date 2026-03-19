@@ -15,7 +15,7 @@ func TestRenderPreviewWrapsBlocks(t *testing.T) {
 			{Kind: PreviewToolCall, Title: "exec_command", Body: "{\"cmd\":\"ls -la\"}"},
 		},
 	}
-	got := RenderPreview(doc, 20, false)
+	got := RenderPreview(doc, 20, false, nil)
 	if got == "" {
 		t.Fatal("expected rendered preview")
 	}
@@ -34,11 +34,11 @@ func TestRenderPreviewHidesSystemContextByDefault(t *testing.T) {
 			{Kind: PreviewAssistant, Title: "Assistant", Body: "hello"},
 		},
 	}
-	hidden := RenderPreview(doc, 80, false)
+	hidden := RenderPreview(doc, 80, false, nil)
 	if strings.Contains(hidden, "system instructions") {
 		t.Fatalf("expected system context to be hidden, got %q", hidden)
 	}
-	shown := RenderPreview(doc, 80, true)
+	shown := RenderPreview(doc, 80, true, nil)
 	if !strings.Contains(shown, "system instructions") {
 		t.Fatalf("expected system context to be shown, got %q", shown)
 	}

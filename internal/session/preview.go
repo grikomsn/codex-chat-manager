@@ -189,8 +189,9 @@ func truncate(s string, limit int) string {
 	return s[:limit-3] + "..."
 }
 
-// RenderPreview returns an ANSI-free wrapped preview suitable for a viewport.
-func RenderPreview(doc PreviewDocument, width int, showSystem bool) string {
+// RenderPreview returns a wrapped preview suitable for a viewport.
+// If mr is provided, assistant messages will be rendered as markdown with ANSI formatting.
+func RenderPreview(doc PreviewDocument, width int, showSystem bool, mr *MarkdownRenderer) string {
 	if width < 20 {
 		width = 20
 	}
@@ -209,8 +210,20 @@ func RenderPreview(doc PreviewDocument, width int, showSystem bool) string {
 			parts = append(parts, fmt.Sprintf("[%s]", header))
 			continue
 		}
-		wrapped := wordwrap.String(body, width)
-		parts = append(parts, fmt.Sprintf("[%s]\n%s", header, wrapped))
+
+		var content string
+		if mr != nil && block.Kind == PreviewAssistant {
+			// Render assistant messages as markdown
+			rendered, err := mr.Render(body, width-4) // account for borders/padding
+			if err == nil {
+				content = rendered
+			} else {
+				content = wordwrap.String(body, width)
+			}
+		} else {
+			content = wordwrap.String(body, width)
+		}
+		parts = append(parts, fmt.Sprintf("[%s]\n%s", header, content))
 	}
 	return strings.Join(parts, "\n\n")
 }
