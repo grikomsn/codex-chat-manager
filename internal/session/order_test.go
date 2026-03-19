@@ -75,4 +75,3 @@ func TestFilterGroupsOrdersByProjectStatusAndRecency(t *testing.T) {
 		}
 	}
 }
-

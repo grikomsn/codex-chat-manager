@@ -157,4 +157,3 @@ func portableBase(value string) string {
 	}
 	return trimmed
 }
-

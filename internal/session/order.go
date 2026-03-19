@@ -101,4 +101,3 @@ func statusRank(status Status) int {
 		return 3
 	}
 }
-
