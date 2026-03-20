@@ -25,21 +25,34 @@ Examples:
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !deleteYes {
-			return fmt.Errorf("delete requires --yes to confirm")
+			err := fmt.Errorf("delete requires --yes to confirm")
+			if deleteJSON {
+				return printJSONCommandError(cmd, jsonErrorInvalidRequest, err, map[string]string{
+					"required_flag": "yes",
+				})
+			}
+			return err
 		}
 		store, err := resolveStore(codexHome)
 		if err != nil {
+			if deleteJSON {
+				return printJSONCommandError(cmd, jsonErrorInventoryUnavailable, err, nil)
+			}
 			return err
 		}
 		plan, err := store.Delete(deleteIDs)
 		if err != nil {
 			if deleteJSON {
-				_ = printJSON(cmd.OutOrStdout(), plan)
+				code := actionFailureCode(plan, jsonErrorOperationFailed)
+				if len(plan.BlockedByActiveIDs) > 0 {
+					code = jsonErrorDeleteBlockedActive
+				}
+				return printJSONCommandError(cmd, code, err, actionPlanDetails(plan))
 			}
 			return err
 		}
 		if deleteJSON {
-			return printJSON(cmd.OutOrStdout(), plan)
+			return printJSON(cmd.OutOrStdout(), cmd, plan)
 		}
 		return printActionPlan(cmd.OutOrStdout(), plan)
 	},

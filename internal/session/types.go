@@ -152,3 +152,14 @@ type ActionPlan struct {
 	RemovedSnapshots   []string       `json:"removed_snapshots,omitempty"`
 	BlockedByActiveIDs []string       `json:"blocked_by_active_ids,omitempty"`
 }
+
+type ResumeIntent struct {
+	RequestedID      string            `json:"requested_id"`
+	SessionID        string            `json:"session_id,omitempty"`
+	Status           Status            `json:"status,omitempty"`
+	Eligible         bool              `json:"eligible"`
+	WorkingDirectory string            `json:"working_directory,omitempty"`
+	Executable       string            `json:"executable,omitempty"`
+	Args             []string          `json:"args,omitempty"`
+	EnvOverrides     map[string]string `json:"env_overrides,omitempty"`
+}

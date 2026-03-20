@@ -24,14 +24,20 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := resolveStore(codexHome)
 		if err != nil {
+			if unarchiveJSON {
+				return printJSONCommandError(cmd, jsonErrorInventoryUnavailable, err, nil)
+			}
 			return err
 		}
 		plan, err := store.Unarchive(unarchiveIDs)
 		if err != nil {
+			if unarchiveJSON {
+				return printJSONCommandError(cmd, actionFailureCode(plan, jsonErrorOperationFailed), err, actionPlanDetails(plan))
+			}
 			return err
 		}
 		if unarchiveJSON {
-			return printJSON(cmd.OutOrStdout(), plan)
+			return printJSON(cmd.OutOrStdout(), cmd, plan)
 		}
 		return printActionPlan(cmd.OutOrStdout(), plan)
 	},

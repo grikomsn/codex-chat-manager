@@ -11,8 +11,10 @@ var codexHome string
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:   "codex-chat-manager",
-	Short: "Manage Codex chat sessions",
+	Use:           "codex-chat-manager",
+	Short:         "Manage Codex chat sessions",
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	Long: `codex-chat-manager is a tool for managing OpenAI Codex chat sessions.
 
 It provides both an interactive TUI and command-line interface for:

@@ -66,6 +66,8 @@ Resume an active session:
 
 ```bash
 codex-chat-manager sessions resume --id SESSION_ID
+codex-chat-manager sessions resume --id SESSION_ID --json
+codex-chat-manager sessions resume --id SESSION_ID --print-cmd
 ```
 
 Shell completions:
@@ -85,6 +87,139 @@ codex-chat-manager --help              # Show help
 ```
 
 The app can operate on a copied Codex home if you want to inspect or test against a safe fixture instead of your live `~/.codex`.
+
+## JSON Contract
+
+When `--json` is enabled, the CLI returns a stable machine-readable envelope instead of raw domain objects. The top-level response always includes `schema_version`, `command`, `ok`, and either `data` or a structured `error`.
+
+Agents and integrations should rely on `schema_version` before decoding `data`, since the nested payload may evolve independently of the envelope.
+
+- `schema_version`: stable envelope version, currently `"1"`
+- `command`: command path such as `sessions list` or `sessions delete`
+- `ok`: `true` for successful responses, `false` for structured command failures
+- `data`: nested command payload on success
+- `error.code`: stable machine-readable failure code such as `invalid_request`, `inventory_unavailable`, `operation_failed`, or `delete_blocked_active`
+- `error.message`: human-readable error text when `ok` is `false`
+- `error.details`: optional structured failure details, including partial `ActionPlan` data for mutation failures when it is safe to expose
+
+Example `sessions list` response:
+
+```json
+{
+  "schema_version": "1",
+  "command": "sessions list",
+  "ok": true,
+  "data": [
+    {
+      "parent": {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "path": "/Users/me/.codex/sessions/2026/03/19/rollout-...jsonl",
+        "status": "active"
+      },
+      "status": "active",
+      "aggregate_at": "2026-03-19T10:42:03Z",
+      "child_count": 0,
+      "cascades_to": [
+        "11111111-1111-1111-1111-111111111111"
+      ],
+      "parent_exists": true
+    }
+  ]
+}
+```
+
+Example mutation response:
+
+```json
+{
+  "schema_version": "1",
+  "command": "sessions archive",
+  "ok": true,
+  "data": {
+    "type": "archive",
+    "requested_ids": [
+      "11111111-1111-1111-1111-111111111111"
+    ],
+    "target_ids": [
+      "11111111-1111-1111-1111-111111111111"
+    ],
+    "targets": [
+      {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "path": "/Users/me/.codex/archived_sessions/rollout-...jsonl",
+        "status": "archived",
+        "is_child": false
+      }
+    ],
+    "skipped": []
+  }
+}
+```
+
+Example mutation failure response:
+
+```json
+{
+  "schema_version": "1",
+  "command": "sessions delete",
+  "ok": false,
+  "error": {
+    "code": "delete_blocked_active",
+    "message": "delete blocked by active sessions: 11111111-1111-1111-1111-111111111111",
+    "details": {
+      "type": "delete",
+      "requested_ids": [
+        "11111111-1111-1111-1111-111111111111"
+      ],
+      "blocked_by_active_ids": [
+        "11111111-1111-1111-1111-111111111111"
+      ],
+      "targets": [],
+      "skipped": []
+    }
+  }
+}
+```
+
+Example `sessions resume --json` response:
+
+```json
+{
+  "schema_version": "1",
+  "command": "sessions resume",
+  "ok": true,
+  "data": {
+    "intent": {
+      "requested_id": "11111111-1111-1111-1111-111111111111",
+      "session_id": "11111111-1111-1111-1111-111111111111",
+      "status": "active",
+      "eligible": true,
+      "working_directory": "/Users/me/project",
+      "executable": "codex",
+      "args": [
+        "resume",
+        "11111111-1111-1111-1111-111111111111"
+      ],
+      "env_overrides": {
+        "CODEX_HOME": "/Users/me/.codex"
+      }
+    },
+    "executed": false
+  }
+}
+```
+
+Agents can query resume intent before execution:
+
+```bash
+codex-chat-manager sessions resume --id SESSION_ID --json
+```
+
+If the returned intent is eligible and the automation wants to proceed, it can opt into execution explicitly:
+
+```bash
+codex-chat-manager sessions resume --id SESSION_ID --execute --json
+```
 
 ## Raycast Extension
 

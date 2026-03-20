@@ -31,15 +31,21 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := resolveStore(codexHome)
 		if err != nil {
+			if listJSON {
+				return printJSONCommandError(cmd, jsonErrorInventoryUnavailable, err, nil)
+			}
 			return err
 		}
 		snapshot, err := store.LoadSnapshot()
 		if err != nil {
+			if listJSON {
+				return printJSONCommandError(cmd, jsonErrorInventoryUnavailable, err, nil)
+			}
 			return err
 		}
 		filtered := session.FilterGroups(snapshot.Groups, listStatusFilter, listTextFilter, listIncludeChildren)
 		if listJSON {
-			return printJSON(cmd.OutOrStdout(), filtered)
+			return printJSON(cmd.OutOrStdout(), cmd, filtered)
 		}
 		return printGroupTable(cmd.OutOrStdout(), filtered, listIncludeChildren)
 	},

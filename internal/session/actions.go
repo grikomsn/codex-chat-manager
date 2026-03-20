@@ -2,12 +2,18 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+)
+
+var (
+	ErrSessionNotFound  = errors.New("session not found")
+	ErrResumeIneligible = errors.New("resume ineligible")
 )
 
 // ResolveTargets expands requested IDs into concrete rollout files.
@@ -184,53 +190,77 @@ func (s *Store) Delete(ids []string) (ActionPlan, error) {
 	return plan, nil
 }
 
-// ResumeCmd returns the shell command used to resume an active session.
-func (s *Store) ResumeCmd(record SessionRecord) (*exec.Cmd, error) {
-	if record.Status != StatusActive {
-		return nil, fmt.Errorf("session %s is archived; unarchive it before resuming", record.ID)
+// ResumeIntent resolves the machine-readable resume plan for a session.
+func (s *Store) ResumeIntent(id string) (ResumeIntent, error) {
+	snapshot, err := s.LoadSnapshot()
+	if err != nil {
+		return ResumeIntent{}, err
 	}
+	record, ok := snapshot.RecordsByID[id]
+	if !ok {
+		return ResumeIntent{
+			RequestedID: id,
+			Eligible:    false,
+		}, fmt.Errorf("%w: unknown session id: %s", ErrSessionNotFound, id)
+	}
+
 	workdir, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("resolve current working directory: %w", err)
+		return ResumeIntent{}, fmt.Errorf("resolve current working directory: %w", err)
 	}
 	if record.CWD != "" {
 		if info, err := os.Stat(record.CWD); err == nil && info.IsDir() {
 			workdir = record.CWD
 		}
 	}
-	cmd := exec.Command("codex", "resume", record.ID)
-	cmd.Dir = workdir
-	cmd.Env = append(os.Environ(), EnvCodexHome+"="+s.cfg.CodexHome)
-	return cmd, nil
+
+	intent := ResumeIntent{
+		RequestedID:      id,
+		SessionID:        record.ID,
+		Status:           record.Status,
+		Eligible:         record.Status == StatusActive,
+		WorkingDirectory: workdir,
+		Executable:       "codex",
+		Args:             []string{"resume", record.ID},
+		EnvOverrides: map[string]string{
+			EnvCodexHome: s.cfg.CodexHome,
+		},
+	}
+	if !intent.Eligible {
+		return intent, fmt.Errorf("%w: session %s is archived; unarchive it before resuming", ErrResumeIneligible, record.ID)
+	}
+
+	return intent, nil
+}
+
+func (s *Store) resumeCmd(intent ResumeIntent, ctx context.Context) *exec.Cmd {
+	if ctx != nil {
+		return exec.CommandContext(ctx, intent.Executable, intent.Args...)
+	}
+	return exec.Command(intent.Executable, intent.Args...)
+}
+
+func resumeEnvAssignments(overrides map[string]string) []string {
+	assignments := make([]string, 0, len(overrides))
+	for key, value := range overrides {
+		assignments = append(assignments, key+"="+value)
+	}
+	slices.Sort(assignments)
+	return assignments
 }
 
 // Resume executes codex resume for a single active session.
 func (s *Store) Resume(ctx context.Context, id string) error {
-	snapshot, err := s.LoadSnapshot()
+	intent, err := s.ResumeIntent(id)
 	if err != nil {
 		return err
 	}
-	record, ok := snapshot.RecordsByID[id]
-	if !ok {
-		return fmt.Errorf("unknown session id: %s", id)
-	}
-	cmd, err := s.ResumeCmd(record)
-	if err != nil {
-		return err
-	}
-	if ctx != nil {
-		resumeCmd := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
-		resumeCmd.Dir = cmd.Dir
-		resumeCmd.Env = cmd.Env
-		resumeCmd.Stdin = os.Stdin
-		resumeCmd.Stdout = os.Stdout
-		resumeCmd.Stderr = os.Stderr
-		cmd = resumeCmd
-	} else {
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
+	cmd := s.resumeCmd(intent, ctx)
+	cmd.Dir = intent.WorkingDirectory
+	cmd.Env = append(os.Environ(), resumeEnvAssignments(intent.EnvOverrides)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("resume session %s: %w", id, err)
 	}
