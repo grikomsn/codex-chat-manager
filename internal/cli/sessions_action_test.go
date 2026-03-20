@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -80,28 +79,19 @@ func TestSessionsUnarchiveJSONSkipped(t *testing.T) {
 	}
 }
 
-func TestSessionsDeleteJSONBlockedByActiveSchema(t *testing.T) {
+func TestSessionsDeleteJSONActiveSessionSchema(t *testing.T) {
 	root := t.TempDir()
 	id := "11111111-1111-1111-1111-111111111111"
 	makeSessionFixture(t, root, id, "Active Session")
 
 	stdout, _, err := executeCLI(t, root, "sessions", "delete", "--id", id, "--yes", "--json")
-	if err == nil {
-		t.Fatal("expected blocked delete error")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
 	}
 
 	envelope := decodeEnvelope(t, stdout)
-	if envelope.OK {
-		t.Fatalf("expected error response, got %s", stdout)
-	}
-	if envelope.Error == nil {
-		t.Fatalf("expected error payload, got nil")
-	}
-	if envelope.Error.Code != string(jsonErrorDeleteBlockedActive) {
-		t.Fatalf("expected delete blocked code, got %#v", envelope.Error)
-	}
-	if !strings.Contains(envelope.Error.Message, id) {
-		t.Fatalf("expected blocked id in message, got %#v", envelope.Error)
+	if !envelope.OK {
+		t.Fatalf("expected ok response, got %s", stdout)
 	}
 
 	var details struct {
@@ -111,8 +101,8 @@ func TestSessionsDeleteJSONBlockedByActiveSchema(t *testing.T) {
 		Targets            []any    `json:"targets"`
 		Skipped            []any    `json:"skipped"`
 	}
-	if err := json.Unmarshal(envelope.Error.Details, &details); err != nil {
-		t.Fatalf("unmarshal error details: %v", err)
+	if err := json.Unmarshal(envelope.Data, &details); err != nil {
+		t.Fatalf("unmarshal action details: %v", err)
 	}
 	if details.Type != "delete" {
 		t.Fatalf("expected delete details, got %+v", details)
@@ -120,7 +110,7 @@ func TestSessionsDeleteJSONBlockedByActiveSchema(t *testing.T) {
 	if len(details.RequestedIDs) != 1 || details.RequestedIDs[0] != id {
 		t.Fatalf("unexpected requested ids: %+v", details.RequestedIDs)
 	}
-	if len(details.BlockedByActiveIDs) != 1 || details.BlockedByActiveIDs[0] != id {
-		t.Fatalf("unexpected blocked ids: %+v", details.BlockedByActiveIDs)
+	if len(details.BlockedByActiveIDs) != 0 {
+		t.Fatalf("expected no blocked ids, got %+v", details.BlockedByActiveIDs)
 	}
 }

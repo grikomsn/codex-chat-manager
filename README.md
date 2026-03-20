@@ -164,18 +164,10 @@ Example mutation failure response:
   "command": "sessions delete",
   "ok": false,
   "error": {
-    "code": "delete_blocked_active",
-    "message": "delete blocked by active sessions: 11111111-1111-1111-1111-111111111111",
+    "code": "invalid_request",
+    "message": "delete requires --yes to confirm",
     "details": {
-      "type": "delete",
-      "requested_ids": [
-        "11111111-1111-1111-1111-111111111111"
-      ],
-      "blocked_by_active_ids": [
-        "11111111-1111-1111-1111-111111111111"
-      ],
-      "targets": [],
-      "skipped": []
+      "required_flag": "yes"
     }
   }
 }
@@ -271,9 +263,10 @@ The Codex on-disk format is reverse-engineered from upstream behavior and may dr
 
 - Sessions are discovered from rollout files, not from `session_index.jsonl`.
 - Parent session actions cascade to grouped subagent children.
-- Deleting active sessions is blocked. Archive first, then delete.
+- Delete is destructive for both archived and active sessions. Use `--yes` and review the selected targets carefully.
 - Delete removes:
   - archived rollout JSONL files
+  - active rollout JSONL files
   - matching rows in `session_index.jsonl`
   - matching `shell_snapshots/<id>.sh`
 - Delete ignores missing sidecars and never touches SQLite.
@@ -294,7 +287,7 @@ Key bindings:
 - `h`, left arrow, `esc`: back
 - `a`: archive selected sessions
 - `u`: unarchive selected sessions
-- `d`: delete selected archived sessions
+- `d`: delete selected sessions
 - `r`: resume the highlighted active session
 - `ctrl+r`: refresh from disk
 - `?`: toggle help

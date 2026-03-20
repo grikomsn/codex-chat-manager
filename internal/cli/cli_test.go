@@ -134,40 +134,24 @@ func TestSessionsDeleteJSON(t *testing.T) {
 	assertActionEnvelope(t, stdout, "sessions delete", "delete")
 }
 
-func TestSessionsDeleteJSONError(t *testing.T) {
+func TestSessionsDeleteJSONActiveSession(t *testing.T) {
 	root := t.TempDir()
 	id := "11111111-1111-1111-1111-111111111111"
 	makeSessionFixture(t, root, id, "Test title")
 
 	stdout, _, err := executeCLI(t, root, "sessions", "delete", "--id", id, "--yes", "--json")
-	if err == nil || !strings.Contains(err.Error(), "active sessions") {
-		t.Fatalf("expected active sessions error, got %v", err)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
 	}
-	envelope := decodeEnvelope(t, stdout)
-	if envelope.OK {
-		t.Fatalf("expected error response, got %s", stdout)
-	}
-	if len(envelope.Data) != 0 && string(envelope.Data) != "null" {
-		t.Fatalf("expected no top-level data payload, got %s", string(envelope.Data))
-	}
-	if envelope.Command != "sessions delete" {
-		t.Fatalf("expected command %q, got %q", "sessions delete", envelope.Command)
-	}
-	if envelope.Error == nil {
-		t.Fatalf("expected error payload, got nil")
-	}
-	if envelope.Error.Code != string(jsonErrorDeleteBlockedActive) {
-		t.Fatalf("expected error code %q, got %q", jsonErrorDeleteBlockedActive, envelope.Error.Code)
-	}
-	if !strings.Contains(envelope.Error.Message, "active sessions") {
-		t.Fatalf("expected active sessions message, got %#v", envelope.Error)
-	}
+	assertActionEnvelope(t, stdout, "sessions delete", "delete")
+
 	var plan testActionPlan
-	if err := json.Unmarshal(envelope.Error.Details, &plan); err != nil {
+	envelope := decodeEnvelope(t, stdout)
+	if err := json.Unmarshal(envelope.Data, &plan); err != nil {
 		t.Fatalf("unmarshal action plan: %v", err)
 	}
-	if len(plan.BlockedByActiveIDs) != 1 || plan.BlockedByActiveIDs[0] != id {
-		t.Fatalf("expected blocked id %q, got %+v", id, plan.BlockedByActiveIDs)
+	if len(plan.BlockedByActiveIDs) != 0 {
+		t.Fatalf("expected no blocked ids, got %+v", plan.BlockedByActiveIDs)
 	}
 }
 
