@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,6 +115,58 @@ func TestResolveTargetsCascadesParent(t *testing.T) {
 	}
 }
 
+func TestResumeIntentForActiveSession(t *testing.T) {
+	t.Parallel()
+
+	store, id := testStoreWithOneSessionAndCWD(t, StatusActive, t.TempDir())
+
+	intent, err := store.ResumeIntent(id)
+	if err != nil {
+		t.Fatalf("ResumeIntent() error = %v", err)
+	}
+	if !intent.Eligible {
+		t.Fatalf("expected eligible resume intent")
+	}
+	if intent.Status != StatusActive {
+		t.Fatalf("expected active status, got %q", intent.Status)
+	}
+	if intent.WorkingDirectory == "" {
+		t.Fatal("expected working directory")
+	}
+	if intent.Executable != "codex" {
+		t.Fatalf("expected codex executable, got %q", intent.Executable)
+	}
+	if len(intent.Args) != 2 || intent.Args[0] != "resume" || intent.Args[1] != id {
+		t.Fatalf("unexpected args: %+v", intent.Args)
+	}
+	if intent.EnvOverrides[EnvCodexHome] != store.cfg.CodexHome {
+		t.Fatalf("expected CODEX_HOME override %q, got %q", store.cfg.CodexHome, intent.EnvOverrides[EnvCodexHome])
+	}
+}
+
+func TestResumeIntentRejectsArchivedSession(t *testing.T) {
+	t.Parallel()
+
+	store, id := testStoreWithOneSessionAndCWD(t, StatusArchived, t.TempDir())
+
+	intent, err := store.ResumeIntent(id)
+	if err == nil {
+		t.Fatal("expected archived resume error")
+	}
+	if !errors.Is(err, ErrResumeIneligible) {
+		t.Fatalf("expected ErrResumeIneligible, got %v", err)
+	}
+	if intent.SessionID != id {
+		t.Fatalf("expected session id %q, got %q", id, intent.SessionID)
+	}
+	if intent.Eligible {
+		t.Fatal("expected ineligible intent")
+	}
+	if intent.Status != StatusArchived {
+		t.Fatalf("expected archived status, got %q", intent.Status)
+	}
+}
+
 func testStoreWithOneSession(t *testing.T, status Status) (*Store, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -134,6 +187,36 @@ func testStoreWithOneSession(t *testing.T, status Status) (*Store, string) {
 	}
 	path := filepath.Join(dir, "rollout-2026-03-19T10-42-03-"+id+".jsonl")
 	body := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/tmp/app","source":"vscode"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"title"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return NewStore(cfg), id
+}
+
+func testStoreWithOneSessionAndCWD(t *testing.T, status Status, cwd string) (*Store, string) {
+	t.Helper()
+	root := t.TempDir()
+	cfg := Config{
+		CodexHome:        root,
+		SessionsDir:      filepath.Join(root, "sessions"),
+		ArchivedDir:      filepath.Join(root, "archived_sessions"),
+		SessionIndexPath: filepath.Join(root, "session_index.jsonl"),
+		ShellSnapshots:   filepath.Join(root, "shell_snapshots"),
+	}
+	id := "11111111-1111-1111-1111-111111111111"
+	dir := filepath.Join(cfg.SessionsDir, "2026", "03", "19")
+	if status == StatusArchived {
+		dir = cfg.ArchivedDir
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-2026-03-19T10-42-03-"+id+".jsonl")
+	body := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"` + cwd + `","source":"vscode"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"title"}}` + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)

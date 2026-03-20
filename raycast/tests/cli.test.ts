@@ -1,28 +1,78 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import { actionArgs, listArgs, parseManagerJSON, ParserError } from "../src/cli-core";
-import { addToQueue, reconcileQueue, removeFromQueue, toggleQueue } from "../src/queue";
+import {
+  actionArgs,
+  formatManagerResponseErrorMessage,
+  listArgs,
+  parseManagerJSON,
+  parseManagerResponse,
+  ParserError,
+  ManagerResponseError,
+} from "../src/cli-core";
+import {
+  addToQueue,
+  reconcileQueue,
+  removeFromQueue,
+  toggleQueue,
+} from "../src/queue";
+
+const testDir = path.dirname(fileURLToPath(import.meta.url));
 
 describe("cli helpers", () => {
   describe("listArgs", () => {
     it("builds list args for filters", () => {
       expect(listArgs("all")).toEqual(["sessions", "list", "--json"]);
-      expect(listArgs("active")).toEqual(["sessions", "list", "--json", "--status", "active"]);
-      expect(listArgs("archived")).toEqual(["sessions", "list", "--json", "--status", "archived"]);
+      expect(listArgs("active")).toEqual([
+        "sessions",
+        "list",
+        "--json",
+        "--status",
+        "active",
+      ]);
+      expect(listArgs("archived")).toEqual([
+        "sessions",
+        "list",
+        "--json",
+        "--status",
+        "archived",
+      ]);
     });
   });
 
   describe("actionArgs", () => {
     it("builds delete args with confirmation bypass", () => {
-      expect(actionArgs("delete", ["abc"])).toEqual(["sessions", "delete", "--id", "abc", "--yes", "--json"]);
+      expect(actionArgs("delete", ["abc"])).toEqual([
+        "sessions",
+        "delete",
+        "--id",
+        "abc",
+        "--yes",
+        "--json",
+      ]);
     });
 
     it("builds archive args without confirmation bypass", () => {
-      expect(actionArgs("archive", ["abc"])).toEqual(["sessions", "archive", "--id", "abc", "--json"]);
+      expect(actionArgs("archive", ["abc"])).toEqual([
+        "sessions",
+        "archive",
+        "--id",
+        "abc",
+        "--json",
+      ]);
     });
 
     it("builds unarchive args without confirmation bypass", () => {
-      expect(actionArgs("unarchive", ["abc"])).toEqual(["sessions", "unarchive", "--id", "abc", "--json"]);
+      expect(actionArgs("unarchive", ["abc"])).toEqual([
+        "sessions",
+        "unarchive",
+        "--id",
+        "abc",
+        "--json",
+      ]);
     });
 
     it("builds args with multiple IDs", () => {
@@ -43,16 +93,90 @@ describe("cli helpers", () => {
 
   describe("parseManagerJSON", () => {
     it("parses manager JSON payloads", () => {
-      const groups = parseManagerJSON<{ parent: { id: string } }[]>('[{"parent":{"id":"abc"}}]');
+      const groups = parseManagerJSON<{ parent: { id: string } }[]>(
+        '[{"parent":{"id":"abc"}}]',
+      );
       expect(groups).toEqual([{ parent: { id: "abc" } }]);
     });
 
+    it("unwraps successful envelopes", () => {
+      const payload = parseManagerJSON<{ ok: boolean }>(
+        JSON.stringify({
+          schema_version: "1",
+          command: "sessions list",
+          ok: true,
+          data: { ok: true },
+        }),
+      );
+      expect(payload).toEqual({ ok: true });
+    });
+
+    it("parses the shared mixed-group fixture without mixed_status", () => {
+      const fixture = readFileSync(
+        path.join(
+          testDir,
+          "../../internal/cli/testdata/sessions-list-mixed.json",
+        ),
+        "utf8",
+      );
+
+      const response = parseManagerResponse<{ status: string }[]>(fixture);
+      expect(response.envelope?.ok).toBe(true);
+      expect(response.data[0]?.status).toBe("mixed");
+      expect("mixed_status" in (response.data[0] as Record<string, unknown>)).toBe(
+        false,
+      );
+    });
+
+    it("throws structured response errors for failed envelopes", () => {
+      const stdout = JSON.stringify({
+        schema_version: "1",
+        command: "sessions delete",
+        ok: false,
+        error: {
+          code: "delete_blocked_active",
+          message: "delete blocked",
+          details: {
+            type: "delete",
+            blocked_by_active_ids: ["abc", "def"],
+            targets: [{ id: "abc" }],
+          },
+        },
+      });
+
+      const response = parseManagerResponse<unknown>(stdout);
+      expect(response.envelope?.ok).toBe(false);
+      expect(() => parseManagerJSON(stdout)).toThrow(ManagerResponseError);
+
+      try {
+        parseManagerJSON(stdout);
+        expect.fail("Should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ManagerResponseError);
+        const responseError = error as ManagerResponseError;
+        expect(responseError.code).toBe("delete_blocked_active");
+        expect(responseError.blockedIds).toEqual(["abc", "def"]);
+        expect(responseError.data).toBeUndefined();
+        expect(responseError.details).toMatchObject({
+          type: "delete",
+          blocked_by_active_ids: ["abc", "def"],
+        });
+        expect(
+          formatManagerResponseErrorMessage(responseError.response),
+        ).toContain("blocked IDs: abc, def");
+      }
+    });
+
     it("throws error for empty string", () => {
-      expect(() => parseManagerJSON("")).toThrow("Empty response from codex-chat-manager");
+      expect(() => parseManagerJSON("")).toThrow(
+        "Empty response from codex-chat-manager",
+      );
     });
 
     it("throws error for whitespace-only string", () => {
-      expect(() => parseManagerJSON("   ")).toThrow("Empty response from codex-chat-manager");
+      expect(() => parseManagerJSON("   ")).toThrow(
+        "Empty response from codex-chat-manager",
+      );
     });
 
     it("throws ParserError for invalid JSON", () => {
@@ -128,7 +252,9 @@ describe("queue helpers", () => {
 
   describe("reconcileQueue", () => {
     it("filters to known IDs", () => {
-      expect(reconcileQueue(["one", "two", "three"], ["one", "three"])).toEqual(["one", "three"]);
+      expect(reconcileQueue(["one", "two", "three"], ["one", "three"])).toEqual(
+        ["one", "three"],
+      );
     });
 
     it("returns empty array when no matches", () => {
