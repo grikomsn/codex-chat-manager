@@ -255,7 +255,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
         const renderableCount = detailDoc
           ? countRenderableBlocks(detailDoc.blocks, showSystem)
           : undefined;
-        const icon = statusIcon(group.status, group.mixed_status);
+        const icon = statusIcon(group.status);
         const queued = queuedSet.has(group.parent.id);
 
         return (
@@ -274,7 +274,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
               ...(queued ? [{ icon: Icon.Checkmark, tooltip: "Queued" }] : []),
               {
                 tag: {
-                  value: statusLabel(group.status, group.mixed_status),
+                  value: statusLabel(group.status),
                   color:
                     group.status === "archived"
                       ? Color.SecondaryText
@@ -291,7 +291,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label
                       title="Status"
-                      text={statusLabel(group.status, group.mixed_status)}
+                      text={statusLabel(group.status)}
                     />
                     <List.Item.Detail.Metadata.Label
                       title="Updated"
@@ -361,7 +361,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
                     onAction={() => void runMutation("unarchive", [group])}
                   />
                 ) : null}
-                {group.status === "archived" && !group.mixed_status ? (
+                {group.status === "archived" ? (
                   <Action
                     title="Delete Conversation"
                     style={Action.Style.Destructive}

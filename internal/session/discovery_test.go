@@ -142,3 +142,47 @@ func toJSONString(s string) string {
 	out.WriteByte('"')
 	return out.String()
 }
+
+func TestLoadSnapshotMarksMixedGroupsViaStatusOnly(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cfg := Config{
+		CodexHome:        root,
+		SessionsDir:      filepath.Join(root, "sessions"),
+		ArchivedDir:      filepath.Join(root, "archived_sessions"),
+		SessionIndexPath: filepath.Join(root, "session_index.jsonl"),
+		ShellSnapshots:   filepath.Join(root, "shell_snapshots"),
+	}
+
+	activePath := filepath.Join(cfg.SessionsDir, "2026", "03", "19")
+	if err := os.MkdirAll(activePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cfg.ArchivedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	parentID := "11111111-1111-1111-1111-111111111111"
+	childID := "22222222-2222-2222-2222-222222222222"
+	parentBody := `{"type":"session_meta","payload":{"id":"` + parentID + `","cwd":"/tmp/app","source":"vscode"}}` + "\n"
+	childBody := `{"type":"session_meta","payload":{"id":"` + childID + `","cwd":"/tmp/app","source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + parentID + `"}}}}}` + "\n"
+
+	if err := os.WriteFile(filepath.Join(activePath, "rollout-2026-03-19T10-42-03-"+parentID+".jsonl"), []byte(parentBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.ArchivedDir, "rollout-2026-03-19T10-43-03-"+childID+".jsonl"), []byte(childBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewStore(cfg)
+	snapshot, err := store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if len(snapshot.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(snapshot.Groups))
+	}
+	if snapshot.Groups[0].Status != StatusMixed {
+		t.Fatalf("expected mixed group status, got %q", snapshot.Groups[0].Status)
+	}
+}

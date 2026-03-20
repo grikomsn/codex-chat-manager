@@ -13,18 +13,12 @@ export function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-export function statusLabel(status: Status, mixedStatus = false): string {
-  if (mixedStatus) {
-    return "mixed";
-  }
+export function statusLabel(status: Status): string {
   return status;
 }
 
-export function statusIcon(
-  status: Status,
-  mixedStatus = false,
-): { source: Icon; tintColor: Color } {
-  if (mixedStatus || status === "mixed") {
+export function statusIcon(status: Status): { source: Icon; tintColor: Color } {
+  if (status === "mixed") {
     return { source: Icon.CircleFilled, tintColor: Color.Yellow };
   }
   if (status === "archived") {
@@ -38,9 +32,9 @@ export interface StatusMeta {
   icon: { source: Icon; tintColor: Color };
 }
 
-export function getStatusMeta(status: Status, mixedStatus = false): StatusMeta {
-  const label = statusLabel(status, mixedStatus);
-  const icon = statusIcon(status, mixedStatus);
+export function getStatusMeta(status: Status): StatusMeta {
+  const label = statusLabel(status);
+  const icon = statusIcon(status);
   return { label, icon };
 }
 
@@ -71,7 +65,6 @@ export function childGroups(group: SessionGroup): SessionGroup[] {
     children: [],
     status: child.status,
     aggregate_at: child.updated_at,
-    mixed_status: false,
     child_count: 0,
     cascades_to: [child.id],
     parent_exists: true,
@@ -83,11 +76,11 @@ export function canDeleteGroups(groups: SessionGroup[]): boolean {
 }
 
 export function shouldAllowArchive(group: SessionGroup): boolean {
-  return group.status !== "archived" || group.mixed_status;
+  return group.status !== "archived";
 }
 
 export function shouldAllowUnarchive(group: SessionGroup): boolean {
-  return group.status !== "active" || group.mixed_status;
+  return group.status !== "active";
 }
 
 export function countRenderableBlocks(

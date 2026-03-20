@@ -38,7 +38,6 @@ function createMockGroup(overrides: Partial<SessionGroup> = {}): SessionGroup {
     parent: createMockRecord(),
     status: "active",
     aggregate_at: "2024-01-15T12:00:00Z",
-    mixed_status: false,
     child_count: 0,
     cascades_to: ["test-id"],
     parent_exists: true,
@@ -67,55 +66,31 @@ describe("formatDate", () => {
 
 describe("statusLabel", () => {
   it.each([
-    ["active", false, "active"],
-    ["archived", false, "archived"],
-    ["mixed", false, "mixed"],
-    ["active", true, "mixed"],
-    ["archived", true, "mixed"],
-    ["mixed", true, "mixed"],
+    ["active", "active"],
+    ["archived", "archived"],
+    ["mixed", "mixed"],
   ] as const)(
-    "returns '%s' when status is '%s' and mixedStatus is %s",
-    (status, mixedStatus, expected) => {
-      expect(statusLabel(status, mixedStatus)).toBe(expected);
+    "returns '%s' when status is '%s'",
+    (status, expected) => {
+      expect(statusLabel(status)).toBe(expected);
     },
   );
-
-  it("returns status as-is when mixedStatus is false", () => {
-    expect(statusLabel("active", false)).toBe("active");
-    expect(statusLabel("archived", false)).toBe("archived");
-    expect(statusLabel("mixed", false)).toBe("mixed");
-  });
-
-  it("returns 'mixed' when mixedStatus is true", () => {
-    expect(statusLabel("active", true)).toBe("mixed");
-    expect(statusLabel("archived", true)).toBe("mixed");
-  });
 });
 
 describe("statusIcon", () => {
   it("returns yellow circle for mixed status", () => {
-    const result = statusIcon("mixed", false);
-    expect(result).toEqual({ source: Icon.CircleFilled, tintColor: Color.Yellow });
-  });
-
-  it("returns yellow circle when mixedStatus is true", () => {
-    const result = statusIcon("active", true);
+    const result = statusIcon("mixed");
     expect(result).toEqual({ source: Icon.CircleFilled, tintColor: Color.Yellow });
   });
 
   it("returns gray circle for archived status", () => {
-    const result = statusIcon("archived", false);
+    const result = statusIcon("archived");
     expect(result).toEqual({ source: Icon.Circle, tintColor: Color.SecondaryText });
   });
 
   it("returns green circle for active status", () => {
-    const result = statusIcon("active", false);
+    const result = statusIcon("active");
     expect(result).toEqual({ source: Icon.CircleFilled, tintColor: Color.Green });
-  });
-
-  it("prioritizes mixedStatus over status value", () => {
-    const result = statusIcon("archived", true);
-    expect(result).toEqual({ source: Icon.CircleFilled, tintColor: Color.Yellow });
   });
 });
 
@@ -239,8 +214,8 @@ describe("childGroups", () => {
 describe("canDeleteGroups", () => {
   it("returns true when groups are selected", () => {
     const groups = [
-      createMockGroup({ status: "archived", mixed_status: false }),
-      createMockGroup({ status: "active", mixed_status: true }),
+      createMockGroup({ status: "archived" }),
+      createMockGroup({ status: "active" }),
     ];
     expect(canDeleteGroups(groups)).toBe(true);
   });
@@ -249,66 +224,48 @@ describe("canDeleteGroups", () => {
     expect(canDeleteGroups([])).toBe(false);
   });
 
-  it("returns true when any group has mixed_status", () => {
-    const groups = [
-      createMockGroup({ status: "archived", mixed_status: false }),
-      createMockGroup({ status: "archived", mixed_status: true }),
-    ];
-    expect(canDeleteGroups(groups)).toBe(true);
-  });
-
   it("returns true if any group is active", () => {
     const groups = [
-      createMockGroup({ status: "archived", mixed_status: false }),
-      createMockGroup({ status: "active", mixed_status: false }),
+      createMockGroup({ status: "archived" }),
+      createMockGroup({ status: "active" }),
     ];
     expect(canDeleteGroups(groups)).toBe(true);
   });
 
   it("returns true if all groups are active", () => {
-    const groups = [
-      createMockGroup({ status: "active", mixed_status: false }),
-    ];
+    const groups = [createMockGroup({ status: "active" })];
     expect(canDeleteGroups(groups)).toBe(true);
   });
 
   it("returns true if any group is mixed status", () => {
-    const groups = [
-      createMockGroup({ status: "mixed", mixed_status: false }),
-    ];
+    const groups = [createMockGroup({ status: "mixed" })];
     expect(canDeleteGroups(groups)).toBe(true);
   });
 });
 
 describe("shouldAllowArchive", () => {
   it("returns true for active groups", () => {
-    const group = createMockGroup({ status: "active", mixed_status: false });
+    const group = createMockGroup({ status: "active" });
     expect(shouldAllowArchive(group)).toBe(true);
   });
 
-  it("returns true for mixed groups regardless of status", () => {
-    const activeMixed = createMockGroup({ status: "active", mixed_status: true });
-    const archivedMixed = createMockGroup({ status: "archived", mixed_status: true });
-    expect(shouldAllowArchive(activeMixed)).toBe(true);
-    expect(shouldAllowArchive(archivedMixed)).toBe(true);
+  it("returns true for mixed groups", () => {
+    expect(shouldAllowArchive(createMockGroup({ status: "mixed" }))).toBe(true);
   });
 
-  it("returns false for non-mixed archived groups", () => {
-    const group = createMockGroup({ status: "archived", mixed_status: false });
+  it("returns false for archived groups", () => {
+    const group = createMockGroup({ status: "archived" });
     expect(shouldAllowArchive(group)).toBe(false);
   });
 
   it.each([
-    ["active", false, true],
-    ["archived", false, false],
-    ["mixed", false, true],
-    ["active", true, true],
-    ["archived", true, true],
-    ["mixed", true, true],
+    ["active", true],
+    ["archived", false],
+    ["mixed", true],
   ] as const)(
-    "returns %s for status '%s' with mixed_status %s",
-    (status, mixedStatus, expected) => {
-      const group = createMockGroup({ status, mixed_status: mixedStatus });
+    "returns %s for status '%s'",
+    (status, expected) => {
+      const group = createMockGroup({ status });
       expect(shouldAllowArchive(group)).toBe(expected);
     },
   );
@@ -316,33 +273,27 @@ describe("shouldAllowArchive", () => {
 
 describe("shouldAllowUnarchive", () => {
   it("returns true for archived groups", () => {
-    const group = createMockGroup({ status: "archived", mixed_status: false });
+    const group = createMockGroup({ status: "archived" });
     expect(shouldAllowUnarchive(group)).toBe(true);
   });
 
-  it("returns true for mixed groups regardless of status", () => {
-    const activeMixed = createMockGroup({ status: "active", mixed_status: true });
-    const archivedMixed = createMockGroup({ status: "archived", mixed_status: true });
-    expect(shouldAllowUnarchive(activeMixed)).toBe(true);
-    expect(shouldAllowUnarchive(archivedMixed)).toBe(true);
+  it("returns true for mixed groups", () => {
+    expect(shouldAllowUnarchive(createMockGroup({ status: "mixed" }))).toBe(true);
   });
 
-  it("returns false for non-mixed active groups", () => {
-    const group = createMockGroup({ status: "active", mixed_status: false });
+  it("returns false for active groups", () => {
+    const group = createMockGroup({ status: "active" });
     expect(shouldAllowUnarchive(group)).toBe(false);
   });
 
   it.each([
-    ["active", false, false],
-    ["archived", false, true],
-    ["mixed", false, true],
-    ["active", true, true],
-    ["archived", true, true],
-    ["mixed", true, true],
+    ["active", false],
+    ["archived", true],
+    ["mixed", true],
   ] as const)(
-    "returns %s for status '%s' with mixed_status %s",
-    (status, mixedStatus, expected) => {
-      const group = createMockGroup({ status, mixed_status: mixedStatus });
+    "returns %s for status '%s'",
+    (status, expected) => {
+      const group = createMockGroup({ status });
       expect(shouldAllowUnarchive(group)).toBe(expected);
     },
   );
