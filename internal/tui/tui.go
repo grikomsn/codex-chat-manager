@@ -77,7 +77,7 @@ func newKeyMap() keyMap {
 		Back:    key.NewBinding(key.WithKeys("esc", "h", "left"), key.WithHelp("esc", "back")),
 		Archive: key.NewBinding(key.WithKeys("a"), key.WithHelp("a a", "archive")),
 		Unarch:  key.NewBinding(key.WithKeys("u"), key.WithHelp("u u", "unarchive")),
-		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d d", "delete")),
+		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d d d", "delete")),
 		Resume:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "resume")),
 		Refresh: key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "refresh")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -126,7 +126,7 @@ type errorMsg struct {
 	message string
 }
 
-type doubleTapExpiredMsg struct {
+type confirmationExpiredMsg struct {
 	nonce int
 }
 
@@ -184,6 +184,9 @@ type model struct {
 	errorMsg         string
 	armedAct         session.ActionType
 	armedIDs         []string
+	armedStep        int
+	armedCount       int
+	armedTaps        int
 	armedUntil       time.Time
 	armedNonce       int
 	sized            bool
@@ -337,13 +340,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		cmd, handled := m.handleMouse(msg)
 		if handled {
-			m.disarmDoubleTap()
+			m.disarmConfirmation()
 			return m, cmd
 		}
 		return m, nil
-	case doubleTapExpiredMsg:
+	case confirmationExpiredMsg:
 		if m.armedAct != "" && msg.nonce == m.armedNonce {
-			m.disarmDoubleTap()
+			m.disarmConfirmation()
 		}
 		return m, nil
 	case clearErrorMsg:
@@ -351,16 +354,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Quit) {
-			m.disarmDoubleTap()
+			m.disarmConfirmation()
 			return m, tea.Quit
 		}
 		if key.Matches(msg, m.keys.Help) {
-			m.disarmDoubleTap()
+			m.disarmConfirmation()
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Refresh) {
-			m.disarmDoubleTap()
+			m.disarmConfirmation()
 			m.clearError()
 			if err := m.refresh(); err != nil {
 				return m, m.setError(err.Error())
@@ -368,7 +371,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.System) {
-			m.disarmDoubleTap()
+			m.disarmConfirmation()
 			m.clearError()
 			m.showSystem = !m.showSystem
 			m.syncPreviewPreserveOffset()
@@ -390,41 +393,99 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) disarmDoubleTap() {
+func (m *model) disarmConfirmation() {
 	m.armedAct = ""
 	m.armedIDs = nil
+	m.armedStep = 0
+	m.armedCount = 0
+	m.armedTaps = 0
 	m.armedUntil = time.Time{}
-	m.restoreDoubleTapHelp()
+	m.restoreConfirmationHelp()
 }
 
-func (m *model) restoreDoubleTapHelp() {
+func (m *model) restoreConfirmationHelp() {
 	m.keys.Archive.SetHelp("a a", "archive")
 	m.keys.Unarch.SetHelp("u u", "unarchive")
-	m.keys.Delete.SetHelp("d d", "delete")
+	m.keys.Delete.SetHelp(m.deleteHelpKey(0), "delete")
 }
 
-func (m *model) armDoubleTap(action session.ActionType, requestedIDs []string, resolvedCount int) tea.Cmd {
+func deleteTapsRequired(records []session.SessionRecord) int {
+	for _, record := range records {
+		if record.Status != session.StatusArchived {
+			return 3
+		}
+	}
+	return 2
+}
+
+func confirmationTapsRequired(action session.ActionType, records []session.SessionRecord) int {
+	if action == session.ActionDelete {
+		return deleteTapsRequired(records)
+	}
+	return 2
+}
+
+func repeatHelpKey(r string, count int) string {
+	if count < 1 {
+		count = 1
+	}
+	return strings.TrimSpace(strings.Repeat(r+" ", count))
+}
+
+func (m *model) deleteHelpKey(currentStep int) string {
+	_, _, tapsRequired, err := m.prepareConfirmation(session.ActionDelete)
+	if err != nil || tapsRequired == 0 {
+		tapsRequired = 2
+	}
+	remaining := tapsRequired - currentStep
+	if remaining < 1 {
+		remaining = 1
+	}
+	return repeatHelpKey("d", remaining)
+}
+
+func confirmationHelpKey(action session.ActionType, currentStep int, tapsRequired int) string {
+	remaining := tapsRequired - currentStep
+	if remaining < 1 {
+		remaining = 1
+	}
+	switch action {
+	case session.ActionArchive:
+		return repeatHelpKey("a", remaining)
+	case session.ActionUnarchive:
+		return repeatHelpKey("u", remaining)
+	case session.ActionDelete:
+		return repeatHelpKey("d", remaining)
+	default:
+		return ""
+	}
+}
+
+func (m *model) armConfirmation(action session.ActionType, requestedIDs []string, resolvedCount int, currentStep int, tapsRequired int) tea.Cmd {
 	m.armedAct = action
 	m.armedIDs = requestedIDs
+	m.armedStep = currentStep
+	m.armedCount = resolvedCount
+	m.armedTaps = tapsRequired
 	m.armedUntil = time.Now().Add(2 * time.Second)
 	m.armedNonce++
 	nonce := m.armedNonce
 
 	switch action {
 	case session.ActionArchive:
-		m.keys.Archive.SetHelp("a", fmt.Sprintf("confirm archive (%d)", resolvedCount))
+		m.keys.Archive.SetHelp(confirmationHelpKey(action, currentStep, tapsRequired), fmt.Sprintf("confirm archive (%d)", resolvedCount))
 	case session.ActionUnarchive:
-		m.keys.Unarch.SetHelp("u", fmt.Sprintf("confirm unarchive (%d)", resolvedCount))
+		m.keys.Unarch.SetHelp(confirmationHelpKey(action, currentStep, tapsRequired), fmt.Sprintf("confirm unarchive (%d)", resolvedCount))
 	case session.ActionDelete:
-		m.keys.Delete.SetHelp("d", fmt.Sprintf("confirm delete (%d)", resolvedCount))
+		m.keys.Delete.SetHelp(confirmationHelpKey(action, currentStep, tapsRequired), fmt.Sprintf("confirm delete (%d)", resolvedCount))
 	}
 
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
-		return doubleTapExpiredMsg{nonce: nonce}
+		return confirmationExpiredMsg{nonce: nonce}
 	})
 }
 
-func (m *model) prepareDoubleTap(action session.ActionType) ([]string, int, error) {
+func (m *model) prepareConfirmation(action session.ActionType) ([]string, int, int, error) {
 	requestedIDs := m.selectedIDs()
 	if len(requestedIDs) == 0 {
 		if group := m.selectedGroup(); group != nil {
@@ -432,36 +493,29 @@ func (m *model) prepareDoubleTap(action session.ActionType) ([]string, int, erro
 		}
 	}
 	if len(requestedIDs) == 0 {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
 
 	_, records, err := m.store.ResolveTargets(requestedIDs)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if len(records) == 0 {
-		return nil, 0, nil
+		return nil, 0, 0, nil
 	}
-	if action == session.ActionDelete {
-		var blockedIDs []string
-		for _, record := range records {
-			if record.Status != session.StatusArchived {
-				blockedIDs = append(blockedIDs, record.ID)
-			}
-		}
-		if len(blockedIDs) > 0 {
-			return nil, 0, fmt.Errorf("delete blocked by active sessions: %s", strings.Join(blockedIDs, ", "))
-		}
-	}
-	return requestedIDs, len(records), nil
+	return requestedIDs, len(records), confirmationTapsRequired(action, records), nil
 }
 
-func (m model) handleDoubleTap(action session.ActionType) (tea.Model, tea.Cmd) {
+func (m model) handleConfirmation(action session.ActionType) (tea.Model, tea.Cmd) {
 	m.clearError()
 	if m.armedAct != "" && time.Now().After(m.armedUntil) {
-		m.disarmDoubleTap()
+		m.disarmConfirmation()
 	}
 	if m.armedAct == action && time.Now().Before(m.armedUntil) {
+		nextStep := m.armedStep + 1
+		if nextStep < m.armedTaps {
+			return m, m.armConfirmation(action, m.armedIDs, m.armedCount, nextStep, m.armedTaps)
+		}
 		var err error
 		switch action {
 		case session.ActionArchive:
@@ -471,7 +525,7 @@ func (m model) handleDoubleTap(action session.ActionType) (tea.Model, tea.Cmd) {
 		case session.ActionDelete:
 			_, err = m.store.Delete(m.armedIDs)
 		}
-		m.disarmDoubleTap()
+		m.disarmConfirmation()
 		if err != nil {
 			return m, m.setError(err.Error())
 		}
@@ -482,15 +536,15 @@ func (m model) handleDoubleTap(action session.ActionType) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	requestedIDs, resolvedCount, err := m.prepareDoubleTap(action)
+	requestedIDs, resolvedCount, tapsRequired, err := m.prepareConfirmation(action)
 	if err != nil {
-		m.disarmDoubleTap()
+		m.disarmConfirmation()
 		return m, m.setError(err.Error())
 	}
 	if len(requestedIDs) == 0 {
 		return m, nil
 	}
-	return m, m.armDoubleTap(action, requestedIDs, resolvedCount)
+	return m, m.armConfirmation(action, requestedIDs, resolvedCount, 1, tapsRequired)
 }
 
 func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -506,7 +560,7 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				isConfirmTap = key.Matches(keyMsg, m.keys.Delete)
 			}
 			if !isConfirmTap {
-				m.disarmDoubleTap()
+				m.disarmConfirmation()
 			}
 		}
 		switch {
@@ -545,11 +599,11 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case key.Matches(keyMsg, m.keys.Archive):
-			return m.handleDoubleTap(session.ActionArchive)
+			return m.handleConfirmation(session.ActionArchive)
 		case key.Matches(keyMsg, m.keys.Unarch):
-			return m.handleDoubleTap(session.ActionUnarchive)
+			return m.handleConfirmation(session.ActionUnarchive)
 		case key.Matches(keyMsg, m.keys.Delete):
-			return m.handleDoubleTap(session.ActionDelete)
+			return m.handleConfirmation(session.ActionDelete)
 		case key.Matches(keyMsg, m.keys.Resume):
 			m.clearError()
 			if group := m.selectedGroup(); group != nil {
@@ -566,6 +620,9 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if group := m.selectedGroup(); group != nil && m.isWide() {
 		m.current = group
 		m.syncPreview()
+	}
+	if m.armedAct == "" {
+		m.restoreConfirmationHelp()
 	}
 	return m, cmd
 }
@@ -701,6 +758,9 @@ func (m *model) reloadList() {
 	} else {
 		m.current = nil
 	}
+	if m.armedAct == "" {
+		m.restoreConfirmationHelp()
+	}
 }
 
 func (m *model) filteredGroups() []session.SessionGroup {
@@ -777,14 +837,23 @@ func (m *model) toggleGroup(group *session.SessionGroup) {
 		}
 		m.selection[id] = struct{}{}
 	}
+	if m.armedAct == "" {
+		m.restoreConfirmationHelp()
+	}
 }
 
 func (m *model) toggleRecord(id string) {
 	if _, ok := m.selection[id]; ok {
 		delete(m.selection, id)
+		if m.armedAct == "" {
+			m.restoreConfirmationHelp()
+		}
 		return
 	}
 	m.selection[id] = struct{}{}
+	if m.armedAct == "" {
+		m.restoreConfirmationHelp()
+	}
 }
 
 func (m *model) selectedIDs() []string {

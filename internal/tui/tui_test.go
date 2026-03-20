@@ -83,7 +83,7 @@ func TestDoubleTapArchiveArmsThenExecutesCascade(t *testing.T) {
 	m = updated.(model)
 
 	if m.armedAct != "" {
-		t.Fatalf("expected double-tap to disarm after execution, got %q", m.armedAct)
+		t.Fatalf("expected archive confirmation to disarm after execution, got %q", m.armedAct)
 	}
 	if got := m.keys.Archive.Help().Key; got != "a a" {
 		t.Fatalf("expected archive help to restore default key, got %q", got)
@@ -116,7 +116,7 @@ func TestDoubleTapTimeoutClearsArming(t *testing.T) {
 	m = updated.(model)
 	nonce := m.armedNonce
 
-	updated, _ = m.Update(doubleTapExpiredMsg{nonce: nonce})
+	updated, _ = m.Update(confirmationExpiredMsg{nonce: nonce})
 	m = updated.(model)
 
 	if m.armedAct != "" {
@@ -135,7 +135,7 @@ func TestDoubleTapTimeoutClearsArming(t *testing.T) {
 	}
 }
 
-func TestDoubleTapDeleteBlockedDoesNotArm(t *testing.T) {
+func TestTripleTapDeleteArmsThenExecutesForActiveSessions(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithChildGroup(t)
 	m, err := initialModel(cfg)
@@ -146,17 +146,146 @@ func TestDoubleTapDeleteBlockedDoesNotArm(t *testing.T) {
 	m.height = 30
 	m.resize()
 
+	if got := m.keys.Delete.Help().Key; got != "d d d" {
+		t.Fatalf("expected active delete help to default to %q, got %q", "d d d", got)
+	}
+
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m = updated.(model)
 
-	if m.armedAct != "" {
-		t.Fatalf("expected delete to remain unarmed when blocked, got %q", m.armedAct)
+	if m.armedAct != session.ActionDelete {
+		t.Fatalf("expected delete to arm on first tap, got %q", m.armedAct)
 	}
 	if got := m.keys.Delete.Help().Key; got != "d d" {
-		t.Fatalf("expected delete help to keep default key, got %q", got)
+		t.Fatalf("expected first delete confirmation key to be %q, got %q", "d d", got)
 	}
-	if !strings.Contains(m.errorMsg, "delete blocked by active sessions") {
-		t.Fatalf("expected delete blocked error, got %q", m.errorMsg)
+	if m.errorMsg != "" {
+		t.Fatalf("expected no delete error, got %q", m.errorMsg)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	if m.armedAct != session.ActionDelete {
+		t.Fatalf("expected delete to remain armed on second tap, got %q", m.armedAct)
+	}
+	if got := m.keys.Delete.Help().Key; got != "d" {
+		t.Fatalf("expected second delete confirmation key to be %q, got %q", "d", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	if m.armedAct != "" {
+		t.Fatalf("expected delete to disarm after third tap, got %q", m.armedAct)
+	}
+
+	snapshot, err := m.store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if _, ok := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"]; ok {
+		t.Fatal("expected active parent to be deleted after third tap")
+	}
+	if _, ok := snapshot.RecordsByID["22222222-2222-2222-2222-222222222222"]; ok {
+		t.Fatal("expected active child to be deleted after third tap")
+	}
+}
+
+func TestDoubleTapDeleteArmsThenExecutesForArchivedSessions(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixture(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 100
+	m.height = 30
+	m.resize()
+
+	id := "11111111-1111-1111-1111-000000000001"
+	if _, err := m.store.Archive([]string{id}); err != nil {
+		t.Fatalf("Archive() error = %v", err)
+	}
+	if err := m.refresh(); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+
+	if got := m.keys.Delete.Help().Key; got != "d d" {
+		t.Fatalf("expected archived delete help to default to %q, got %q", "d d", got)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	if m.armedAct != session.ActionDelete {
+		t.Fatalf("expected archived delete to arm on first tap, got %q", m.armedAct)
+	}
+	if got := m.keys.Delete.Help().Key; got != "d" {
+		t.Fatalf("expected archived delete confirmation key to be %q, got %q", "d", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	if m.armedAct != "" {
+		t.Fatalf("expected archived delete to disarm after second tap, got %q", m.armedAct)
+	}
+	if got := m.keys.Delete.Help().Key; got != "d d" {
+		t.Fatalf("expected archived delete help to restore default key, got %q", got)
+	}
+
+	snapshot, err := m.store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if _, ok := snapshot.RecordsByID[id]; ok {
+		t.Fatal("expected archived session to be deleted after second tap")
+	}
+}
+
+func TestTripleTapDeleteExecutesCascadeForMixedSessions(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixtureWithChildGroup(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.width = 100
+	m.height = 30
+	m.resize()
+
+	childID := "22222222-2222-2222-2222-222222222222"
+	if _, err := m.store.Archive([]string{childID}); err != nil {
+		t.Fatalf("Archive() error = %v", err)
+	}
+	if err := m.refresh(); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+
+	if group := m.selectedGroup(); group == nil || group.Status != session.StatusMixed {
+		t.Fatalf("expected selected group to be mixed, got %#v", group)
+	}
+	if got := m.keys.Delete.Help().Key; got != "d d d" {
+		t.Fatalf("expected mixed delete help to default to %q, got %q", "d d d", got)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(model)
+
+	snapshot, err := m.store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if _, ok := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"]; ok {
+		t.Fatal("expected mixed delete to remove active parent")
+	}
+	if _, ok := snapshot.RecordsByID[childID]; ok {
+		t.Fatal("expected mixed delete to remove archived child via cascade")
 	}
 }
 

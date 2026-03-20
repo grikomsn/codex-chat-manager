@@ -237,10 +237,10 @@ describe("childGroups", () => {
 });
 
 describe("canDeleteGroups", () => {
-  it("returns true only when all groups are archived and not mixed", () => {
+  it("returns true when groups are selected", () => {
     const groups = [
       createMockGroup({ status: "archived", mixed_status: false }),
-      createMockGroup({ status: "archived", mixed_status: false }),
+      createMockGroup({ status: "active", mixed_status: true }),
     ];
     expect(canDeleteGroups(groups)).toBe(true);
   });
@@ -249,34 +249,34 @@ describe("canDeleteGroups", () => {
     expect(canDeleteGroups([])).toBe(false);
   });
 
-  it("returns false if any group has mixed_status", () => {
+  it("returns true when any group has mixed_status", () => {
     const groups = [
       createMockGroup({ status: "archived", mixed_status: false }),
       createMockGroup({ status: "archived", mixed_status: true }),
     ];
-    expect(canDeleteGroups(groups)).toBe(false);
+    expect(canDeleteGroups(groups)).toBe(true);
   });
 
-  it("returns false if any group is active", () => {
+  it("returns true if any group is active", () => {
     const groups = [
       createMockGroup({ status: "archived", mixed_status: false }),
       createMockGroup({ status: "active", mixed_status: false }),
     ];
-    expect(canDeleteGroups(groups)).toBe(false);
+    expect(canDeleteGroups(groups)).toBe(true);
   });
 
-  it("returns false if all groups are active", () => {
+  it("returns true if all groups are active", () => {
     const groups = [
       createMockGroup({ status: "active", mixed_status: false }),
     ];
-    expect(canDeleteGroups(groups)).toBe(false);
+    expect(canDeleteGroups(groups)).toBe(true);
   });
 
-  it("returns false if any group is mixed status", () => {
+  it("returns true if any group is mixed status", () => {
     const groups = [
       createMockGroup({ status: "mixed", mixed_status: false }),
     ];
-    expect(canDeleteGroups(groups)).toBe(false);
+    expect(canDeleteGroups(groups)).toBe(true);
   });
 });
 

@@ -7,12 +7,18 @@ import (
 	"time"
 )
 
-func TestDeleteRejectsActiveSessions(t *testing.T) {
+func TestDeleteRemovesActiveSessions(t *testing.T) {
 	t.Parallel()
 	store, parentID := testStoreWithOneSession(t, StatusActive)
-	_, err := store.Delete([]string{parentID})
-	if err == nil {
-		t.Fatal("expected delete error for active session")
+	plan, err := store.Delete([]string{parentID})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if len(plan.Targets) != 1 {
+		t.Fatalf("expected 1 delete target, got %d", len(plan.Targets))
+	}
+	if _, statErr := os.Stat(plan.Targets[0].Path); !os.IsNotExist(statErr) {
+		t.Fatalf("expected active rollout to be removed, stat err = %v", statErr)
 	}
 }
 

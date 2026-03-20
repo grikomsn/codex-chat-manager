@@ -165,7 +165,7 @@ export default function SessionBrowser(props: SessionBrowserProps) {
     const confirmed = await confirmAlert({
       title: `${titleCase(action)} ${conversationCount} Conversation${conversationCount === 1 ? "" : "s"}${sessionSuffix}?`,
       message: destructive
-        ? "Delete only removes archived rollout files and matching sidecars. Grouped child sessions are included when present."
+        ? "Delete permanently removes the selected rollout files and matching sidecars. Grouped child sessions are included when present."
         : `This will ${action} the selected conversation${conversationCount === 1 ? "" : "s"}${sessionSuffix ? " (including grouped child sessions)" : ""}.`,
       primaryAction: {
         title: titleCase(action),

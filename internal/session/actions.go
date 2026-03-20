@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 )
 
@@ -139,7 +137,7 @@ func (s *Store) Unarchive(ids []string) (ActionPlan, error) {
 	return plan, nil
 }
 
-// Delete removes archived rollout files and easy sidecar artifacts.
+// Delete removes rollout files and easy sidecar artifacts.
 func (s *Store) Delete(ids []string) (ActionPlan, error) {
 	slog.Info("delete operation started", "ids", ids, "action", "delete")
 	_, records, err := s.ResolveTargets(ids)
@@ -150,22 +148,10 @@ func (s *Store) Delete(ids []string) (ActionPlan, error) {
 
 	deleteIDs := make(map[string]struct{})
 	for _, record := range records {
-		if record.Status != StatusArchived {
-			plan.BlockedByActiveIDs = append(plan.BlockedByActiveIDs, record.ID)
-			continue
-		}
 		deleteIDs[record.ID] = struct{}{}
-	}
-	if len(plan.BlockedByActiveIDs) > 0 {
-		slices.Sort(plan.BlockedByActiveIDs)
-		slog.Warn("delete blocked by active sessions", "ids", plan.BlockedByActiveIDs, "action", "delete")
-		return plan, fmt.Errorf("delete blocked by active sessions: %s", strings.Join(plan.BlockedByActiveIDs, ", "))
 	}
 
 	for _, record := range records {
-		if record.Status != StatusArchived {
-			continue
-		}
 		if err := os.Remove(record.Path); err != nil && !os.IsNotExist(err) {
 			return plan, fmt.Errorf("delete %s: %w", record.ID, err)
 		}

@@ -14,11 +14,10 @@ var (
 
 var deleteCmd = &cobra.Command{
 	Use:   "delete --id ID [--id ID2 ...] [--yes]",
-	Short: "Delete archived Codex sessions",
-	Long: `Delete one or more archived Codex sessions permanently.
+	Short: "Delete Codex sessions",
+	Long: `Delete one or more Codex sessions permanently.
 
-This is a destructive operation. Only archived sessions can be deleted.
-Active sessions must be archived first.
+This is a destructive operation. Active sessions are deleted in place.
 
 Examples:
   codex-chat-manager sessions delete --id abc123 --yes
