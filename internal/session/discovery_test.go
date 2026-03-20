@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,4 +71,74 @@ func TestLoadSnapshotIgnoresNoiseAndBuildsGroups(t *testing.T) {
 	if len(group.Children) != 1 || group.Children[0].ID != childID {
 		t.Fatalf("unexpected children %#v", group.Children)
 	}
+}
+
+func TestLoadSnapshotSkipsInjectedAgentsContextForTitleFallback(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cfg := Config{
+		CodexHome:        root,
+		SessionsDir:      filepath.Join(root, "sessions"),
+		ArchivedDir:      filepath.Join(root, "archived_sessions"),
+		SessionIndexPath: filepath.Join(root, "session_index.jsonl"),
+		ShellSnapshots:   filepath.Join(root, "shell_snapshots"),
+	}
+
+	activePath := filepath.Join(cfg.SessionsDir, "2026", "03", "19")
+	if err := os.MkdirAll(activePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	id := "11111111-1111-1111-1111-111111111111"
+	rollout := filepath.Join(activePath, "rollout-2026-03-19T10-42-03-"+id+".jsonl")
+	injected := `# AGENTS.md instructions for /tmp/repo
+
+<INSTRUCTIONS>
+secret
+</INSTRUCTIONS>
+<environment_context>
+...
+</environment_context>`
+
+	body := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/tmp/app","source":"vscode"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":` + toJSONString(injected) + `}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"real title"}}` + "\n"
+	if err := os.WriteFile(rollout, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewStore(cfg)
+	snapshot, err := store.LoadSnapshot()
+	if err != nil {
+		t.Fatalf("LoadSnapshot() error = %v", err)
+	}
+	if len(snapshot.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(snapshot.Groups))
+	}
+	if got := snapshot.Groups[0].Parent.Title; got != "real title" {
+		t.Fatalf("expected title fallback to use real title, got %q", got)
+	}
+}
+
+func toJSONString(s string) string {
+	var out strings.Builder
+	out.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			out.WriteString(`\\`)
+		case '"':
+			out.WriteString(`\"`)
+		case '\n':
+			out.WriteString(`\n`)
+		case '\r':
+			out.WriteString(`\r`)
+		case '\t':
+			out.WriteString(`\t`)
+		default:
+			out.WriteRune(r)
+		}
+	}
+	out.WriteByte('"')
+	return out.String()
 }

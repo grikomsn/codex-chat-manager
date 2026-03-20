@@ -97,6 +97,19 @@ export function countRenderableBlocks(
   blocks: PreviewBlock[],
   showSystem: boolean,
 ): number {
-  return blocks.filter((block) => showSystem || block.title !== "Context")
-    .length;
+  let skippedFirstAssistant = false;
+  const hasUser = blocks.some((block) => block.kind === "user");
+  return blocks.filter((block) => {
+    if (!showSystem && block.title === "Context") {
+      return false;
+    }
+    if (!showSystem && hasUser && !skippedFirstAssistant && block.kind === "assistant") {
+      skippedFirstAssistant = true;
+      return false;
+    }
+    if (block.kind === "assistant" && !skippedFirstAssistant) {
+      skippedFirstAssistant = true;
+    }
+    return true;
+  }).length;
 }

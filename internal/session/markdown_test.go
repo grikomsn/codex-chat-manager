@@ -105,12 +105,13 @@ func TestRenderPreviewWithMarkdown(t *testing.T) {
 		SessionID: "test",
 		Title:     "Test",
 		Blocks: []PreviewBlock{
+			{Kind: PreviewUser, Title: "User", Body: "hi"},
 			{Kind: PreviewAssistant, Title: "Assistant", Body: "# Heading\n\n**Bold text**"},
 		},
 	}
 
 	mr := NewMarkdownRenderer()
-	rendered := RenderPreview(doc, 80, false, mr)
+	rendered := RenderPreview(doc, 80, true, mr)
 
 	if rendered == "" {
 		t.Fatal("expected rendered preview")

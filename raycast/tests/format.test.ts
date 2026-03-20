@@ -388,6 +388,7 @@ describe("countRenderableBlocks", () => {
   it("handles blocks without title", () => {
     const blocks: PreviewBlock[] = [
       { kind: "user", body: "no title" },
+      { kind: "assistant", title: "First", body: "ignored" },
       { kind: "assistant", title: "Response", body: "text" },
     ];
     expect(countRenderableBlocks(blocks, false)).toBe(2);

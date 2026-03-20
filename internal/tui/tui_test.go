@@ -9,6 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/grikomsn/codex-chat-manager/internal/session"
 )
 
@@ -217,12 +219,12 @@ func TestSyncPreviewHidesSystemInstructionsByDefault(t *testing.T) {
 	group := m.groups[0]
 	m.current = &group
 	m.syncPreview()
-	if strings.Contains(m.viewport.View(), "developer system instructions") {
+	if strings.Contains(ansi.Strip(m.viewport.View()), "developer system instructions") {
 		t.Fatalf("expected hidden system instructions, got %q", m.viewport.View())
 	}
 	m.showSystem = true
 	m.syncPreview()
-	if !strings.Contains(m.viewport.View(), "developer system instructions") {
+	if !strings.Contains(ansi.Strip(m.viewport.View()), "developer system instructions") {
 		t.Fatalf("expected visible system instructions, got %q", m.viewport.View())
 	}
 }

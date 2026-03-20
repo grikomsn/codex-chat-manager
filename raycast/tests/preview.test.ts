@@ -24,13 +24,19 @@ describe("preview parser", () => {
         type: "response_item",
         payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Use archive." }] },
       },
-      { type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: { cmd: "ls -la" } } },
+      { type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "call-1", arguments: { cmd: "ls -la" } } },
       { type: "response_item", payload: { type: "function_call_output", call_id: "call-1", output: "done" } },
     ]);
 
     const document = await parsePreviewFromFile(record);
 
-    expect(document.blocks.map((block) => block.title)).toEqual(["User", "Context", "Assistant", "exec_command", "call-1"]);
+    expect(document.blocks.map((block) => block.title)).toEqual([
+      "User",
+      "Context",
+      "Assistant",
+      "exec_command (call-1)",
+      "exec_command (call-1)",
+    ]);
 
     const hidden = renderPreviewMarkdown(document, false);
     const shown = renderPreviewMarkdown(document, true);
@@ -39,6 +45,7 @@ describe("preview parser", () => {
     expect(shown).toContain("system context");
     expect(shown).toContain("Use archive.");
     expect(shown).toContain("call-1");
+    expect(shown).toContain("```bash");
   });
 
   it("keeps low-signal event blocks that are intentionally surfaced", async () => {
@@ -56,6 +63,125 @@ describe("preview parser", () => {
     const document = await parsePreviewFromFile(record);
 
     expect(document.blocks[0]?.title).toBe("No transcript");
+  });
+
+  it("classifies injected AGENTS context as Context and hides it by default", async () => {
+    const record = await makeRecord([
+      {
+        type: "event_msg",
+        payload: {
+          type: "user_message",
+          message:
+            "# AGENTS.md instructions for /tmp/repo\n\n<INSTRUCTIONS>\nsecret\n</INSTRUCTIONS>\n<environment_context>\n...</environment_context>",
+        },
+      },
+      {
+        type: "response_item",
+        payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "hello" }] },
+      },
+    ]);
+
+    const document = await parsePreviewFromFile(record);
+    expect(document.blocks[0]?.title).toBe("Context");
+
+    const hidden = renderPreviewMarkdown(document, false);
+    const shown = renderPreviewMarkdown(document, true);
+
+    expect(hidden).not.toContain("AGENTS.md instructions");
+    expect(shown).toContain("AGENTS.md instructions");
+  });
+
+  it("does not hide assistant messages that merely mention AGENTS context markers", async () => {
+    const record = await makeRecord([
+      { type: "event_msg", payload: { type: "user_message", message: "hello" } },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: "Here is a plan.\n\nIt mentions AGENTS.md instructions for /tmp/repo.\n\n<INSTRUCTIONS>\nsecret\n</INSTRUCTIONS>\n<environment_context>\n...\n</environment_context>",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const document = await parsePreviewFromFile(record);
+    expect(document.blocks.some((block) => block.kind === "assistant")).toBe(true);
+
+    const hidden = renderPreviewMarkdown(document, false);
+    expect(hidden).toContain("secret");
+  });
+
+  it("renders custom tool calls and unwraps custom tool outputs", async () => {
+    const record = await makeRecord([
+      {
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          status: "completed",
+          call_id: "call-1",
+          name: "apply_patch",
+          input: "*** Begin Patch\n*** End Patch\n",
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-1",
+          output: JSON.stringify({
+            output: "Success. Updated the following files:\nM a.txt\n",
+            metadata: { exit_code: 0 },
+          }),
+        },
+      },
+    ]);
+
+    const document = await parsePreviewFromFile(record);
+    expect(document.blocks.map((block) => block.title)).toEqual([
+      "apply_patch (call-1)",
+      "apply_patch (call-1)",
+    ]);
+
+    const rendered = renderPreviewMarkdown(document, true);
+    expect(rendered).toContain("```diff");
+    expect(rendered).toContain("Success. Updated the following files");
+  });
+
+  it("hides the first assistant message when it looks like initial context", async () => {
+    const record = await makeRecord([
+      { type: "event_msg", payload: { type: "user_message", message: "hello" } },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: "AGENTS.md\n<INSTRUCTIONS>\nsecret\n</INSTRUCTIONS>\n<environment_context>\n...\n</environment_context>",
+            },
+          ],
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "real assistant message" }],
+        },
+      },
+    ]);
+
+    const document = await parsePreviewFromFile(record);
+    const hidden = renderPreviewMarkdown(document, false);
+    expect(hidden).not.toContain("secret");
+    expect(hidden).toContain("real assistant message");
   });
 });
 

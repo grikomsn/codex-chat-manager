@@ -46,8 +46,10 @@ type outputMessagePayload struct {
 	Content []messagePart   `json:"content"`
 	Message string          `json:"message"`
 	Args    json.RawMessage `json:"arguments"`
+	Input   json.RawMessage `json:"input"`
 	CallID  string          `json:"call_id"`
 	Name    string          `json:"name"`
+	Status  string          `json:"status"`
 	Output  string          `json:"output"`
 }
 
@@ -311,6 +313,9 @@ func readEventTitle(meta *rolloutMeta, raw json.RawMessage) {
 		return
 	}
 	if payload.Type == "user_message" && meta.titleFallback == "" {
+		if isInjectedAgentsContext(payload.Message) {
+			return
+		}
 		meta.titleFallback = payload.Message
 		meta.hasPreview = payload.Message != ""
 	}
