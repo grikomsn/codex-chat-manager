@@ -8,7 +8,7 @@ before:
 
 builds:
   - id: codex-chat-manager
-    main: ./cmd/codex-chat-manager
+    main: ./cmd/codex-chat-manager/main.go
     binary: codex-chat-manager
     env:
       - CGO_ENABLED=0
