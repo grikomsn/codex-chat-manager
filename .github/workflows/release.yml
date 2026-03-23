@@ -30,7 +30,12 @@ jobs:
 
       - name: Run GoReleaser
         run: |
-          cd "$RUNNER_WORKSPACE/${{ github.event.repository.name }}"
+          repo_dir="/home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}"
+          if [ -d "$repo_dir" ]; then
+            cd "$repo_dir"
+          elif [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE" ]; then
+            cd "$GITHUB_WORKSPACE"
+          fi
           test -f ./cmd/codex-chat-manager/main.go
           goreleaser release --clean
         env:
