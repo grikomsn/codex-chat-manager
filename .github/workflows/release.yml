@@ -22,10 +22,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run GoReleaser
+      - name: Install GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           version: v2.14.3
-          args: release --clean
+          install-only: true
+
+      - name: Run GoReleaser
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
