@@ -29,8 +29,8 @@ jobs:
           install-only: true
 
       - name: Run GoReleaser
-        working-directory: ${{ github.workspace }}
         run: |
+          cd "$RUNNER_WORKSPACE/${{ github.event.repository.name }}"
           test -f ./cmd/codex-chat-manager/main.go
           goreleaser release --clean
         env:
