@@ -298,7 +298,10 @@ function eventBlock(payload: unknown): PreviewBlock | null {
   }
 }
 
-function responseBlocks(payload: unknown, toolNames: Map<string, string>): PreviewBlock[] {
+function responseBlocks(
+  payload: unknown,
+  toolNames: Map<string, string>,
+): PreviewBlock[] {
   const item = payload as OutputMessagePayload | undefined;
   switch (item?.type) {
     case "message": {
@@ -336,7 +339,8 @@ function responseBlocks(payload: unknown, toolNames: Map<string, string>): Previ
     case "tool_call":
     case "custom_tool_call": {
       const name = (item.name || "Tool Call").trim() || "Tool Call";
-      const callId = typeof item.call_id === "string" ? item.call_id.trim() : "";
+      const callId =
+        typeof item.call_id === "string" ? item.call_id.trim() : "";
       if (callId) {
         toolNames.set(callId, name);
       }
@@ -345,7 +349,8 @@ function responseBlocks(payload: unknown, toolNames: Map<string, string>): Previ
         typeof item.input === "string" && item.input.trim()
           ? item.input.trim()
           : "";
-      const body = input || cmd || shortenJSON(item.input ?? item.arguments, 200);
+      const body =
+        input || cmd || shortenJSON(item.input ?? item.arguments, 200);
       return [
         {
           kind: "tool_call",
@@ -358,13 +363,17 @@ function responseBlocks(payload: unknown, toolNames: Map<string, string>): Previ
     case "tool_call_output":
     case "tool_output":
     case "custom_tool_call_output": {
-      const callId = typeof item.call_id === "string" ? item.call_id.trim() : "";
+      const callId =
+        typeof item.call_id === "string" ? item.call_id.trim() : "";
       const name = callId ? toolNames.get(callId) : undefined;
-      const output = normalizeToolOutput(item.output?.trim() || "command completed");
+      const output = normalizeToolOutput(
+        item.output?.trim() || "command completed",
+      );
       return [
         {
           kind: "tool_output",
-          title: callId && name ? `${name} (${callId})` : (callId || "Tool Output"),
+          title:
+            callId && name ? `${name} (${callId})` : callId || "Tool Output",
           body: truncate(output, 500),
         },
       ];
@@ -411,5 +420,7 @@ function isInjectedAgentsContext(message: string): boolean {
     return false;
   }
 
-  return lower.includes("<instructions>") || lower.includes("<environment_context>");
+  return (
+    lower.includes("<instructions>") || lower.includes("<environment_context>")
+  );
 }

@@ -93,7 +93,12 @@ export function countRenderableBlocks(
     if (!showSystem && block.title === "Context") {
       return false;
     }
-    if (!showSystem && hasUser && !skippedFirstAssistant && block.kind === "assistant") {
+    if (
+      !showSystem &&
+      hasUser &&
+      !skippedFirstAssistant &&
+      block.kind === "assistant"
+    ) {
       skippedFirstAssistant = true;
       return false;
     }
