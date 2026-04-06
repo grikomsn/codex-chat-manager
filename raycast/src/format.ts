@@ -72,7 +72,9 @@ export function childGroups(group: SessionGroup): SessionGroup[] {
 }
 
 export function canDeleteGroups(groups: SessionGroup[]): boolean {
-  return groups.length > 0 && groups.every((group) => group.status === "archived");
+  return (
+    groups.length > 0 && groups.every((group) => group.status === "archived")
+  );
 }
 
 export function shouldAllowArchive(group: SessionGroup): boolean {
