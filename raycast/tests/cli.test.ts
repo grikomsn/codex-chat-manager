@@ -92,11 +92,12 @@ describe("cli helpers", () => {
   });
 
   describe("parseManagerJSON", () => {
-    it("parses manager JSON payloads", () => {
-      const groups = parseManagerJSON<{ parent: { id: string } }[]>(
-        '[{"parent":{"id":"abc"}}]',
-      );
-      expect(groups).toEqual([{ parent: { id: "abc" } }]);
+    it("rejects raw payloads without the shared envelope", () => {
+      expect(() =>
+        parseManagerJSON<{ parent: { id: string } }[]>(
+          '[{"parent":{"id":"abc"}}]',
+        ),
+      ).toThrow("Expected codex-chat-manager response envelope");
     });
 
     it("unwraps successful envelopes", () => {

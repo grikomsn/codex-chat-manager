@@ -48,6 +48,26 @@ describe("preview parser", () => {
     expect(shown).toContain("```bash");
   });
 
+  it("falls back to payload message when message content is missing", async () => {
+    const record = await makeRecord([
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          message: "Use archive.",
+          content: [],
+        },
+      },
+    ]);
+
+    const document = await parsePreviewFromFile(record);
+
+    expect(document.blocks).toHaveLength(1);
+    expect(document.blocks[0]?.kind).toBe("assistant");
+    expect(document.blocks[0]?.body).toBe("Use archive.");
+  });
+
   it("keeps low-signal event blocks that are intentionally surfaced", async () => {
     const record = await makeRecord([{ type: "event_msg", payload: { type: "turn_started" } }]);
 

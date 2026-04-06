@@ -212,10 +212,10 @@ describe("childGroups", () => {
 });
 
 describe("canDeleteGroups", () => {
-  it("returns true when groups are selected", () => {
+  it("returns true when all queued groups are archived", () => {
     const groups = [
       createMockGroup({ status: "archived" }),
-      createMockGroup({ status: "active" }),
+      createMockGroup({ status: "archived" }),
     ];
     expect(canDeleteGroups(groups)).toBe(true);
   });
@@ -224,22 +224,12 @@ describe("canDeleteGroups", () => {
     expect(canDeleteGroups([])).toBe(false);
   });
 
-  it("returns true if any group is active", () => {
-    const groups = [
-      createMockGroup({ status: "archived" }),
-      createMockGroup({ status: "active" }),
-    ];
-    expect(canDeleteGroups(groups)).toBe(true);
-  });
-
-  it("returns true if all groups are active", () => {
-    const groups = [createMockGroup({ status: "active" })];
-    expect(canDeleteGroups(groups)).toBe(true);
-  });
-
-  it("returns true if any group is mixed status", () => {
-    const groups = [createMockGroup({ status: "mixed" })];
-    expect(canDeleteGroups(groups)).toBe(true);
+  it.each([
+    ["active", false],
+    ["mixed", false],
+  ] as const)("returns %s for non-archived selection", (status, expected) => {
+    const groups = [createMockGroup({ status })];
+    expect(canDeleteGroups(groups)).toBe(expected);
   });
 });
 

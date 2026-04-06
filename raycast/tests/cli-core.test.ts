@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatManagerResponseErrorMessage,
+  extractManagerResponseError,
   ManagerResponseError,
   parseManagerJSON,
   parseManagerResponse,
@@ -107,6 +108,25 @@ describe("cli-core contract", () => {
         "blocked IDs: parent-1",
       );
     }
+  });
+
+  it("extracts structured failures directly from stdout", () => {
+    const failure = extractManagerResponseError(structuredErrorEnvelope);
+    expect(failure).toBeInstanceOf(ManagerResponseError);
+    expect(failure?.blockedIds).toEqual(["parent-1"]);
+  });
+
+  it("rejects envelopes with unsupported schema versions", () => {
+    const stdout = JSON.stringify({
+      schema_version: "2",
+      command: "sessions list",
+      ok: true,
+      data: [],
+    });
+
+    expect(() => parseManagerJSON(stdout)).toThrow(
+      "Unsupported codex-chat-manager schema version: 2",
+    );
   });
 
   it("rejects empty output", () => {

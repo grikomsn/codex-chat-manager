@@ -26,6 +26,7 @@ interface OutputMessagePayload {
   type?: string;
   role?: string;
   content?: MessagePart[];
+  message?: string;
   arguments?: unknown;
   input?: unknown;
   status?: string;
@@ -306,34 +307,37 @@ function responseBlocks(
   switch (item?.type) {
     case "message": {
       const body = collectMessageText(item.content ?? []);
-      if (!body) {
+      const fallback =
+        typeof item.message === "string" ? item.message.trim() : "";
+      const text = body || fallback;
+      if (!text) {
         return [];
       }
       if (item.role === "developer" || item.role === "system") {
-        return [{ kind: "event", title: "Context", body }];
+        return [{ kind: "event", title: "Context", body: text }];
       }
       if (item.role === "user") {
-        if (isInjectedAgentsContext(body)) {
+        if (isInjectedAgentsContext(text)) {
           return [
             {
               kind: "event",
               title: "Context",
-              body: truncate(body, INJECTED_AGENTS_CONTEXT_LIMIT),
+              body: truncate(text, INJECTED_AGENTS_CONTEXT_LIMIT),
             },
           ];
         }
-        return [{ kind: "user", title: "User", body }];
+        return [{ kind: "user", title: "User", body: text }];
       }
-      if (isInjectedAgentsContext(body)) {
+      if (isInjectedAgentsContext(text)) {
         return [
           {
             kind: "event",
             title: "Context",
-            body: truncate(body, INJECTED_AGENTS_CONTEXT_LIMIT),
+            body: truncate(text, INJECTED_AGENTS_CONTEXT_LIMIT),
           },
         ];
       }
-      return [{ kind: "assistant", title: "Assistant", body }];
+      return [{ kind: "assistant", title: "Assistant", body: text }];
     }
     case "function_call":
     case "tool_call":

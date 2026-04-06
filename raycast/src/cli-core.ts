@@ -19,6 +19,8 @@ export interface ParsedManagerResponse<TData> {
   envelope?: ManagerResponseEnvelope<TData>;
 }
 
+const managerSchemaVersion = "1";
+
 export function listArgs(status: SessionStatusFilter): string[] {
   const args = ["sessions", "list", "--json"];
   if (status !== "all") {
@@ -79,21 +81,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isManagerEnvelope(
+function isManagerEnvelopeShape(
   value: unknown,
-): value is ManagerResponseEnvelope<unknown> {
+): value is Record<string, unknown> {
   if (!isRecord(value)) {
     return false;
   }
-  const hasValidError = value.ok
-    ? value.error === undefined || isRecord(value.error)
-    : isRecord(value.error) && typeof value.error.message === "string";
   return (
     typeof value.schema_version === "string" &&
     typeof value.command === "string" &&
-    typeof value.ok === "boolean" &&
-    hasValidError
+    typeof value.ok === "boolean"
   );
+}
+
+function isValidManagerError(value: unknown, ok: boolean): boolean {
+  if (ok) {
+    return value === undefined || isRecord(value);
+  }
+  return isRecord(value) && typeof value.message === "string";
+}
+
+function isManagerEnvelope(
+  value: unknown,
+): value is ManagerResponseEnvelope<unknown> {
+  if (!isManagerEnvelopeShape(value)) {
+    return false;
+  }
+  return isValidManagerError(value.error, value.ok);
+}
+
+function managerSchemaVersionMismatchMessage(version: unknown): string {
+  return `Unsupported codex-chat-manager schema version: ${String(version)}`;
 }
 
 function extractBlockedIDs(value: unknown): string[] | undefined {
@@ -139,15 +157,33 @@ export function parseManagerResponse<T>(
 
   try {
     const parsed: unknown = JSON.parse(clean);
-    if (isManagerEnvelope(parsed)) {
-      const envelope = parsed as ManagerResponseEnvelope<T>;
-      return {
-        data: (envelope.data as T) ?? (undefined as T),
-        envelope,
-      };
+    if (!isManagerEnvelopeShape(parsed)) {
+      throw new ParserError(
+        "Expected codex-chat-manager response envelope",
+        clean.slice(0, 200),
+      );
     }
-    return { data: parsed as T };
+    if (parsed.schema_version !== managerSchemaVersion) {
+      throw new ParserError(
+        managerSchemaVersionMismatchMessage(parsed.schema_version),
+        clean.slice(0, 200),
+      );
+    }
+    if (!isManagerEnvelope(parsed)) {
+      throw new ParserError(
+        "Malformed codex-chat-manager response envelope",
+        clean.slice(0, 200),
+      );
+    }
+    const envelope = parsed as ManagerResponseEnvelope<T>;
+    return {
+      data: (envelope.data as T) ?? (undefined as T),
+      envelope,
+    };
   } catch (error) {
+    if (error instanceof ParserError) {
+      throw error;
+    }
     const snippet = clean.slice(0, 200);
     throw new ParserError(
       `Failed to parse codex-chat-manager JSON output: ${error instanceof Error ? error.message : String(error)}`,

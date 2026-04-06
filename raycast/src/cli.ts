@@ -6,6 +6,7 @@ import { useExec } from "@raycast/utils";
 import {
   actionArgs,
   formatManagerResponseErrorMessage,
+  extractManagerResponseError,
   listArgs,
   ManagerResponseError,
   parseManagerResponse,
@@ -62,20 +63,6 @@ export class ManagerCommandError extends Error {
   }
 }
 
-function hasStructuredFailure(
-  stdout: string,
-): ManagerResponseError | undefined {
-  try {
-    const response = parseManagerResponse<unknown>(stdout);
-    if (response.envelope && !response.envelope.ok) {
-      return new ManagerResponseError(response.envelope);
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
 function buildManagerCommandError(
   failure: ManagerResponseError,
   command: string,
@@ -106,7 +93,7 @@ export function managerCommandErrorFromOutput(
     exitCode?: number | null;
   },
 ): ManagerCommandError | undefined {
-  const failure = hasStructuredFailure(stdout);
+  const failure = extractManagerResponseError(stdout);
   if (!failure) {
     return undefined;
   }
