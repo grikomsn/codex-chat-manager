@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/grikomsn/codex-chat-manager/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -14,10 +15,10 @@ var (
 
 var deleteCmd = &cobra.Command{
 	Use:   "delete --id ID [--id ID2 ...] [--yes]",
-	Short: "Delete Codex sessions",
-	Long: `Delete one or more Codex sessions permanently.
+	Short: "Delete archived Codex sessions",
+	Long: `Delete one or more archived Codex sessions permanently.
 
-This is a destructive operation. Active sessions are deleted in place.
+This is a destructive operation. Active sessions are protected and cannot be deleted through normal flows.
 
 Examples:
   codex-chat-manager sessions delete --id abc123 --yes
@@ -33,28 +34,7 @@ Examples:
 			}
 			return err
 		}
-		store, err := resolveStore(codexHome)
-		if err != nil {
-			if deleteJSON {
-				return printJSONCommandError(cmd, jsonErrorInventoryUnavailable, err, nil)
-			}
-			return err
-		}
-		plan, err := store.Delete(deleteIDs)
-		if err != nil {
-			if deleteJSON {
-				code := actionFailureCode(plan, jsonErrorOperationFailed)
-				if len(plan.BlockedByActiveIDs) > 0 {
-					code = jsonErrorDeleteBlockedActive
-				}
-				return printJSONCommandError(cmd, code, err, actionPlanDetails(plan))
-			}
-			return err
-		}
-		if deleteJSON {
-			return printJSON(cmd.OutOrStdout(), cmd, plan)
-		}
-		return printActionPlan(cmd.OutOrStdout(), plan)
+		return runActionCommand(cmd, deleteJSON, deleteIDs, (*session.Store).Delete, deleteActionFailureCode)
 	},
 }
 

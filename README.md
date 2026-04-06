@@ -62,6 +62,8 @@ Delete archived sessions:
 codex-chat-manager sessions delete --id SESSION_ID --yes
 ```
 
+Active sessions are protected and will return a structured `delete_blocked_active` error instead of being removed.
+
 Resume an active session:
 
 ```bash

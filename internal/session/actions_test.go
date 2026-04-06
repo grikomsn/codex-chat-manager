@@ -8,18 +8,31 @@ import (
 	"time"
 )
 
-func TestDeleteRemovesActiveSessions(t *testing.T) {
+func TestDeleteBlocksActiveSessions(t *testing.T) {
 	t.Parallel()
 	store, parentID := testStoreWithOneSession(t, StatusActive)
 	plan, err := store.Delete([]string{parentID})
-	if err != nil {
-		t.Fatalf("Delete() error = %v", err)
+	if err == nil {
+		t.Fatal("expected delete to be blocked for active session")
 	}
-	if len(plan.Targets) != 1 {
-		t.Fatalf("expected 1 delete target, got %d", len(plan.Targets))
+	if !errors.Is(err, ErrDeleteBlockedActive) {
+		t.Fatalf("expected ErrDeleteBlockedActive, got %v", err)
 	}
-	if _, statErr := os.Stat(plan.Targets[0].Path); !os.IsNotExist(statErr) {
-		t.Fatalf("expected active rollout to be removed, stat err = %v", statErr)
+	var blockedErr *DeleteBlockedActiveError
+	if !errors.As(err, &blockedErr) {
+		t.Fatalf("expected DeleteBlockedActiveError, got %T", err)
+	}
+	if len(blockedErr.ActiveIDs) != 1 || blockedErr.ActiveIDs[0] != parentID {
+		t.Fatalf("unexpected blocked ids: %+v", blockedErr.ActiveIDs)
+	}
+	if len(plan.BlockedByActiveIDs) != 1 || plan.BlockedByActiveIDs[0] != parentID {
+		t.Fatalf("unexpected blocked ids in plan: %+v", plan.BlockedByActiveIDs)
+	}
+	if len(plan.Targets) != 0 {
+		t.Fatalf("expected no delete targets, got %d", len(plan.Targets))
+	}
+	if _, statErr := os.Stat(filepath.Join(store.cfg.SessionsDir, "2026", "03", "19", "rollout-2026-03-19T10-42-03-"+parentID+".jsonl")); statErr != nil {
+		t.Fatalf("expected active rollout to remain on disk, stat err = %v", statErr)
 	}
 }
 
@@ -78,6 +91,38 @@ func TestDeleteRemovesIndexAndSnapshot(t *testing.T) {
 	}
 	if len(plan.RemovedSnapshots) != 1 {
 		t.Fatalf("expected 1 removed snapshot, got %d", len(plan.RemovedSnapshots))
+	}
+}
+
+func TestArchiveSkipsUnknownIDs(t *testing.T) {
+	t.Parallel()
+	store, id := testStoreWithOneSession(t, StatusActive)
+
+	plan, err := store.Archive([]string{id, "missing"})
+	if err != nil {
+		t.Fatalf("Archive() error = %v", err)
+	}
+	if len(plan.TargetIDs) != 1 || plan.TargetIDs[0] != id {
+		t.Fatalf("unexpected archive targets: %+v", plan.TargetIDs)
+	}
+	if len(plan.Skipped) != 1 || plan.Skipped[0].ID != "missing" || plan.Skipped[0].Reason != "not found" {
+		t.Fatalf("unexpected skipped entries: %+v", plan.Skipped)
+	}
+}
+
+func TestDeleteSkipsUnknownIDs(t *testing.T) {
+	t.Parallel()
+	store, id := testStoreWithOneSession(t, StatusArchived)
+
+	plan, err := store.Delete([]string{id, "missing"})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if len(plan.TargetIDs) != 1 || plan.TargetIDs[0] != id {
+		t.Fatalf("unexpected delete targets: %+v", plan.TargetIDs)
+	}
+	if len(plan.Skipped) != 1 || plan.Skipped[0].ID != "missing" || plan.Skipped[0].Reason != "not found" {
+		t.Fatalf("unexpected skipped entries: %+v", plan.Skipped)
 	}
 }
 

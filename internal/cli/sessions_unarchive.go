@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/grikomsn/codex-chat-manager/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -22,24 +23,7 @@ Examples:
   codex-chat-manager sessions unarchive --id abc123 --json`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store, err := resolveStore(codexHome)
-		if err != nil {
-			if unarchiveJSON {
-				return printJSONCommandError(cmd, jsonErrorInventoryUnavailable, err, nil)
-			}
-			return err
-		}
-		plan, err := store.Unarchive(unarchiveIDs)
-		if err != nil {
-			if unarchiveJSON {
-				return printJSONCommandError(cmd, actionFailureCode(plan, jsonErrorOperationFailed), err, actionPlanDetails(plan))
-			}
-			return err
-		}
-		if unarchiveJSON {
-			return printJSON(cmd.OutOrStdout(), cmd, plan)
-		}
-		return printActionPlan(cmd.OutOrStdout(), plan)
+		return runActionCommand(cmd, unarchiveJSON, unarchiveIDs, (*session.Store).Unarchive, defaultActionFailureCode)
 	},
 }
 

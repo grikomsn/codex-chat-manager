@@ -153,6 +153,7 @@ func scanRoot(root string, status Status, titles map[string]string) ([]SessionRe
 		}
 		record, err := readRecord(path, status, titles)
 		if err != nil {
+			slog.Warn("skip unreadable rollout", "path", path, "error", err)
 			return nil
 		}
 		records = append(records, record)

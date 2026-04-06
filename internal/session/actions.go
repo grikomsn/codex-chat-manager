@@ -9,13 +9,63 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
 var (
-	ErrSessionNotFound  = errors.New("session not found")
-	ErrResumeIneligible = errors.New("resume ineligible")
+	ErrSessionNotFound     = errors.New("session not found")
+	ErrResumeIneligible    = errors.New("resume ineligible")
+	ErrDeleteBlockedActive = errors.New("delete blocked by active sessions")
 )
+
+type DeleteBlockedActiveError struct {
+	ActiveIDs []string
+}
+
+func (e *DeleteBlockedActiveError) Error() string {
+	if len(e.ActiveIDs) == 0 {
+		return ErrDeleteBlockedActive.Error()
+	}
+	if len(e.ActiveIDs) == 1 {
+		return fmt.Sprintf("%s: %s", ErrDeleteBlockedActive.Error(), e.ActiveIDs[0])
+	}
+	return fmt.Sprintf("%s: %s", ErrDeleteBlockedActive.Error(), strings.Join(e.ActiveIDs, ", "))
+}
+
+func (e *DeleteBlockedActiveError) Is(target error) bool {
+	return target == ErrDeleteBlockedActive
+}
+
+func (s *Store) resolveActionTargets(ids []string) (Snapshot, []SessionRecord, []ActionSkip, error) {
+	snapshot, records, err := s.ResolveTargets(ids)
+	if err != nil {
+		return Snapshot{}, nil, nil, err
+	}
+
+	groupByID := make(map[string]struct{}, len(snapshot.Groups))
+	for _, group := range snapshot.Groups {
+		groupByID[group.Parent.ID] = struct{}{}
+	}
+
+	skipped := make([]ActionSkip, 0)
+	seenMissing := make(map[string]struct{})
+	for _, id := range ids {
+		if _, ok := groupByID[id]; ok {
+			continue
+		}
+		if _, ok := snapshot.RecordsByID[id]; ok {
+			continue
+		}
+		if _, ok := seenMissing[id]; ok {
+			continue
+		}
+		seenMissing[id] = struct{}{}
+		skipped = append(skipped, ActionSkip{ID: id, Reason: "not found"})
+	}
+
+	return snapshot, records, skipped, nil
+}
 
 // ResolveTargets expands requested IDs into concrete rollout files.
 func (s *Store) ResolveTargets(ids []string) (Snapshot, []SessionRecord, error) {
@@ -61,11 +111,11 @@ func (s *Store) ResolveTargets(ids []string) (Snapshot, []SessionRecord, error) 
 // Archive moves active rollout files to the archived root.
 func (s *Store) Archive(ids []string) (ActionPlan, error) {
 	slog.Info("archive operation started", "ids", ids, "action", "archive")
-	_, records, err := s.ResolveTargets(ids)
+	_, records, skipped, err := s.resolveActionTargets(ids)
 	if err != nil {
 		return ActionPlan{}, err
 	}
-	plan := ActionPlan{Type: ActionArchive, RequestedIDs: ids}
+	plan := ActionPlan{Type: ActionArchive, RequestedIDs: ids, Skipped: skipped}
 	for _, record := range records {
 		target := ActionTarget{
 			ID:       record.ID,
@@ -99,11 +149,11 @@ func (s *Store) Archive(ids []string) (ActionPlan, error) {
 // Unarchive moves archived rollout files back into the dated active tree.
 func (s *Store) Unarchive(ids []string) (ActionPlan, error) {
 	slog.Info("unarchive operation started", "ids", ids, "action", "unarchive")
-	_, records, err := s.ResolveTargets(ids)
+	_, records, skipped, err := s.resolveActionTargets(ids)
 	if err != nil {
 		return ActionPlan{}, err
 	}
-	plan := ActionPlan{Type: ActionUnarchive, RequestedIDs: ids}
+	plan := ActionPlan{Type: ActionUnarchive, RequestedIDs: ids, Skipped: skipped}
 	now := time.Now()
 	for _, record := range records {
 		target := ActionTarget{
@@ -147,15 +197,26 @@ func (s *Store) Unarchive(ids []string) (ActionPlan, error) {
 // Delete removes rollout files and easy sidecar artifacts.
 func (s *Store) Delete(ids []string) (ActionPlan, error) {
 	slog.Info("delete operation started", "ids", ids, "action", "delete")
-	_, records, err := s.ResolveTargets(ids)
+	_, records, skipped, err := s.resolveActionTargets(ids)
 	if err != nil {
 		return ActionPlan{}, err
 	}
-	plan := ActionPlan{Type: ActionDelete, RequestedIDs: ids}
+	plan := ActionPlan{Type: ActionDelete, RequestedIDs: ids, Skipped: skipped}
 
+	blockedActiveIDs := make([]string, 0)
 	deleteIDs := make(map[string]struct{})
 	for _, record := range records {
+		if record.Status == StatusActive {
+			blockedActiveIDs = append(blockedActiveIDs, record.ID)
+			continue
+		}
 		deleteIDs[record.ID] = struct{}{}
+	}
+	if len(blockedActiveIDs) > 0 {
+		slices.Sort(blockedActiveIDs)
+		plan.BlockedByActiveIDs = blockedActiveIDs
+		slog.Warn("delete blocked by active sessions", "ids", blockedActiveIDs, "action", "delete")
+		return plan, &DeleteBlockedActiveError{ActiveIDs: slices.Clone(blockedActiveIDs)}
 	}
 
 	for _, record := range records {
