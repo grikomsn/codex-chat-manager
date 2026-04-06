@@ -47,6 +47,48 @@ func TestInitialModelResizesNarrow(t *testing.T) {
 	}
 }
 
+func TestSelectedIDsAreSorted(t *testing.T) {
+	t.Parallel()
+	m := model{
+		selection: map[string]struct{}{
+			"c": {},
+			"a": {},
+			"b": {},
+		},
+	}
+
+	got := m.selectedIDs()
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d ids, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected sorted ids %v, got %v", want, got)
+		}
+	}
+}
+
+func TestPreviewHelpDoesNotAdvertiseListActions(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixture(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	m.mode = modePreview
+
+	helpView := m.help.View(m.helpBindings())
+	for _, forbidden := range []string{"archive", "unarchive", "delete", "resume"} {
+		if strings.Contains(helpView, forbidden) {
+			t.Fatalf("expected preview help to omit %q, got %q", forbidden, helpView)
+		}
+	}
+	if !strings.Contains(helpView, "back") {
+		t.Fatalf("expected preview help to include back navigation, got %q", helpView)
+	}
+}
+
 func TestDoubleTapArchiveArmsThenExecutesCascade(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithChildGroup(t)
@@ -135,7 +177,38 @@ func TestDoubleTapTimeoutClearsArming(t *testing.T) {
 	}
 }
 
-func TestTripleTapDeleteArmsThenExecutesForActiveSessions(t *testing.T) {
+func TestRefreshBypassesSnapshotCache(t *testing.T) {
+	t.Parallel()
+	cfg := makeTUIFixture(t)
+	m, err := initialModel(cfg)
+	if err != nil {
+		t.Fatalf("initialModel() error = %v", err)
+	}
+	if got := len(m.groups); got != 1 {
+		t.Fatalf("expected one initial group, got %d", got)
+	}
+
+	path := filepath.Join(cfg.SessionsDir, "2026", "03", "19")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "11111111-1111-1111-1111-000000000002"
+	body := `{"type":"session_meta","payload":{"id":"` + id + `","cwd":"/tmp/app2","source":"vscode"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"test title 02"}}` + "\n"
+	name := "rollout-2026-03-19T10-42-02-" + id + ".jsonl"
+	if err := os.WriteFile(filepath.Join(path, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.refresh(); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+	if got := len(m.groups); got != 2 {
+		t.Fatalf("expected refresh to pick up new session, got %d groups", got)
+	}
+}
+
+func TestDeleteIsBlockedForActiveSessions(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithChildGroup(t)
 	m, err := initialModel(cfg)
@@ -146,8 +219,9 @@ func TestTripleTapDeleteArmsThenExecutesForActiveSessions(t *testing.T) {
 	m.height = 30
 	m.resize()
 
-	if got := m.keys.Delete.Help().Key; got != "d d d" {
-		t.Fatalf("expected active delete help to default to %q, got %q", "d d d", got)
+	helpView := m.help.View(m.helpBindings())
+	if strings.Contains(helpView, "delete") {
+		t.Fatalf("expected active list help to omit delete, got %q", helpView)
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -156,12 +230,6 @@ func TestTripleTapDeleteArmsThenExecutesForActiveSessions(t *testing.T) {
 	if m.armedAct != session.ActionDelete {
 		t.Fatalf("expected delete to arm on first tap, got %q", m.armedAct)
 	}
-	if got := m.keys.Delete.Help().Key; got != "d d" {
-		t.Fatalf("expected first delete confirmation key to be %q, got %q", "d d", got)
-	}
-	if m.errorMsg != "" {
-		t.Fatalf("expected no delete error, got %q", m.errorMsg)
-	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m = updated.(model)
@@ -169,26 +237,29 @@ func TestTripleTapDeleteArmsThenExecutesForActiveSessions(t *testing.T) {
 	if m.armedAct != session.ActionDelete {
 		t.Fatalf("expected delete to remain armed on second tap, got %q", m.armedAct)
 	}
-	if got := m.keys.Delete.Help().Key; got != "d" {
-		t.Fatalf("expected second delete confirmation key to be %q, got %q", "d", got)
-	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m = updated.(model)
 
 	if m.armedAct != "" {
-		t.Fatalf("expected delete to disarm after third tap, got %q", m.armedAct)
+		t.Fatalf("expected delete to disarm after blocked execution, got %q", m.armedAct)
+	}
+	if m.errorMsg == "" {
+		t.Fatal("expected blocked delete to surface an error")
+	}
+	if !strings.Contains(m.errorMsg, "blocked by active sessions") {
+		t.Fatalf("expected blocked delete error, got %q", m.errorMsg)
 	}
 
 	snapshot, err := m.store.LoadSnapshot()
 	if err != nil {
 		t.Fatalf("LoadSnapshot() error = %v", err)
 	}
-	if _, ok := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"]; ok {
-		t.Fatal("expected active parent to be deleted after third tap")
+	if _, ok := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"]; !ok {
+		t.Fatal("expected active parent to remain after blocked delete")
 	}
-	if _, ok := snapshot.RecordsByID["22222222-2222-2222-2222-222222222222"]; ok {
-		t.Fatal("expected active child to be deleted after third tap")
+	if _, ok := snapshot.RecordsByID["22222222-2222-2222-2222-222222222222"]; !ok {
+		t.Fatal("expected active child to remain after blocked delete")
 	}
 }
 
@@ -244,7 +315,7 @@ func TestDoubleTapDeleteArmsThenExecutesForArchivedSessions(t *testing.T) {
 	}
 }
 
-func TestTripleTapDeleteExecutesCascadeForMixedSessions(t *testing.T) {
+func TestDeleteIsBlockedForMixedSessions(t *testing.T) {
 	t.Parallel()
 	cfg := makeTUIFixtureWithChildGroup(t)
 	m, err := initialModel(cfg)
@@ -266,8 +337,9 @@ func TestTripleTapDeleteExecutesCascadeForMixedSessions(t *testing.T) {
 	if group := m.selectedGroup(); group == nil || group.Status != session.StatusMixed {
 		t.Fatalf("expected selected group to be mixed, got %#v", group)
 	}
-	if got := m.keys.Delete.Help().Key; got != "d d d" {
-		t.Fatalf("expected mixed delete help to default to %q, got %q", "d d d", got)
+	helpView := m.help.View(m.helpBindings())
+	if strings.Contains(helpView, "delete") {
+		t.Fatalf("expected mixed list help to omit delete, got %q", helpView)
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -277,15 +349,22 @@ func TestTripleTapDeleteExecutesCascadeForMixedSessions(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	m = updated.(model)
 
+	if m.errorMsg == "" {
+		t.Fatal("expected blocked mixed delete to surface an error")
+	}
+	if !strings.Contains(m.errorMsg, "blocked by active sessions") {
+		t.Fatalf("expected blocked mixed delete error, got %q", m.errorMsg)
+	}
+
 	snapshot, err := m.store.LoadSnapshot()
 	if err != nil {
 		t.Fatalf("LoadSnapshot() error = %v", err)
 	}
-	if _, ok := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"]; ok {
-		t.Fatal("expected mixed delete to remove active parent")
+	if _, ok := snapshot.RecordsByID["11111111-1111-1111-1111-111111111111"]; !ok {
+		t.Fatal("expected mixed delete to leave active parent in place")
 	}
-	if _, ok := snapshot.RecordsByID[childID]; ok {
-		t.Fatal("expected mixed delete to remove archived child via cascade")
+	if _, ok := snapshot.RecordsByID[childID]; !ok {
+		t.Fatal("expected mixed delete to leave archived child in place")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -96,6 +97,119 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Refresh, k.Archive, k.Unarch, k.Delete},
 		{k.Resume, k.Help, k.Quit},
 	}
+}
+
+type contextualHelpKeyMap struct {
+	keys           keyMap
+	mode           mode
+	selectedStatus *session.Status
+	selectedCount  int
+}
+
+func (k contextualHelpKeyMap) ShortHelp() []key.Binding {
+	switch k.mode {
+	case modePreview:
+		return []key.Binding{k.keys.Back, k.keys.System, k.keys.Refresh, k.keys.Help, k.keys.Quit}
+	case modeGroupDetail:
+		return []key.Binding{k.keys.Back, k.keys.Select, k.keys.System, k.keys.Refresh, k.keys.Help, k.keys.Quit}
+	case modeFilter:
+		return []key.Binding{k.keys.Filter, k.keys.Refresh, k.keys.Help, k.keys.Quit}
+	default:
+		return k.listShortHelp()
+	}
+}
+
+func (k contextualHelpKeyMap) FullHelp() [][]key.Binding {
+	switch k.mode {
+	case modePreview:
+		return [][]key.Binding{
+			{k.keys.Back, k.keys.System, k.keys.Refresh},
+			{k.keys.Help, k.keys.Quit},
+		}
+	case modeGroupDetail:
+		return [][]key.Binding{
+			{k.keys.Up, k.keys.Down, k.keys.Enter, k.keys.Back},
+			{k.keys.Select, k.keys.System},
+			{k.keys.Refresh, k.keys.Help, k.keys.Quit},
+		}
+	case modeFilter:
+		return [][]key.Binding{
+			{k.keys.Filter, k.keys.Refresh},
+			{k.keys.Help, k.keys.Quit},
+		}
+	default:
+		return k.listFullHelp()
+	}
+}
+
+func (k contextualHelpKeyMap) listShortHelp() []key.Binding {
+	bindings := []key.Binding{k.keys.Select, k.keys.Status, k.keys.System}
+	if k.allowArchive() {
+		bindings = append(bindings, k.keys.Archive)
+	}
+	if k.allowUnarchive() {
+		bindings = append(bindings, k.keys.Unarch)
+	}
+	if k.allowDelete() {
+		bindings = append(bindings, k.keys.Delete)
+	}
+	if k.allowResume() {
+		bindings = append(bindings, k.keys.Resume)
+	}
+	return append(bindings, k.keys.Help, k.keys.Quit)
+}
+
+func (k contextualHelpKeyMap) listFullHelp() [][]key.Binding {
+	rows := [][]key.Binding{
+		{k.keys.Up, k.keys.Down, k.keys.Enter},
+		{k.keys.Select, k.keys.Filter, k.keys.Status, k.keys.System},
+	}
+	actions := make([]key.Binding, 0, 4)
+	if k.allowArchive() {
+		actions = append(actions, k.keys.Archive)
+	}
+	if k.allowUnarchive() {
+		actions = append(actions, k.keys.Unarch)
+	}
+	if k.allowDelete() {
+		actions = append(actions, k.keys.Delete)
+	}
+	if k.allowResume() {
+		actions = append(actions, k.keys.Resume)
+	}
+	if len(actions) > 0 {
+		rows = append(rows, actions)
+	}
+	rows = append(rows, []key.Binding{k.keys.Help, k.keys.Quit})
+	return rows
+}
+
+func (k contextualHelpKeyMap) allowArchive() bool {
+	if k.selectedStatus == nil {
+		return false
+	}
+	return *k.selectedStatus != session.StatusArchived
+}
+
+func (k contextualHelpKeyMap) allowUnarchive() bool {
+	if k.selectedStatus == nil {
+		return false
+	}
+	return *k.selectedStatus != session.StatusActive
+}
+
+func (k contextualHelpKeyMap) allowDelete() bool {
+	if k.selectedStatus == nil {
+		return false
+	}
+	return *k.selectedStatus == session.StatusArchived
+}
+
+func (k contextualHelpKeyMap) allowResume() bool {
+	if k.selectedStatus == nil {
+		return false
+	}
+	return k.selectedCount == 1 && *k.selectedStatus == session.StatusActive
 }
 
 type item struct {
@@ -685,7 +799,7 @@ func (m model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Loading..."
 	}
-	helpView := m.help.View(m.keys)
+	helpView := m.help.View(m.helpBindings())
 	statusLine := m.renderStatusLine()
 	errLine := m.renderErrorLine()
 	parts := make([]string, 0, 4)
@@ -861,18 +975,56 @@ func (m *model) selectedIDs() []string {
 	for id := range m.selection {
 		ids = append(ids, id)
 	}
+	slices.Sort(ids)
 	return ids
 }
 
 func (m *model) refresh() error {
-	snapshot, err := m.store.LoadSnapshot()
+	freshStore := session.NewStore(m.cfg)
+	snapshot, err := freshStore.LoadSnapshot()
 	if err != nil {
 		return err
 	}
+	m.store = freshStore
+	m.cache = session.NewPreviewCache()
 	m.groups = snapshot.Groups
 	m.reloadList()
 	m.syncPreview()
 	return nil
+}
+
+func (m model) helpBindings() contextualHelpKeyMap {
+	var selectedStatus *session.Status
+
+	selectedStatuses := make([]session.Status, 0, len(m.selection))
+	if len(m.selection) > 0 {
+		for _, group := range m.groups {
+			if _, ok := m.selection[group.Parent.ID]; ok {
+				selectedStatuses = append(selectedStatuses, group.Status)
+			}
+		}
+	}
+	if len(selectedStatuses) == 0 {
+		if group := m.selectedGroup(); group != nil {
+			selectedStatuses = append(selectedStatuses, group.Status)
+		}
+	}
+	if len(selectedStatuses) > 0 {
+		status := selectedStatuses[0]
+		for _, candidate := range selectedStatuses[1:] {
+			if candidate != status {
+				status = session.StatusMixed
+				break
+			}
+		}
+		selectedStatus = &status
+	}
+	return contextualHelpKeyMap{
+		keys:           m.keys,
+		mode:           m.mode,
+		selectedStatus: selectedStatus,
+		selectedCount:  max(1, len(selectedStatuses)),
+	}
 }
 
 func (m *model) clearError() {
