@@ -21,6 +21,13 @@ export interface ParsedManagerResponse<TData> {
 
 const managerSchemaVersion = "1";
 
+interface ManagerEnvelopeShape {
+  schema_version: string;
+  command: string;
+  ok: boolean;
+  error?: unknown;
+}
+
 export function listArgs(status: SessionStatusFilter): string[] {
   const args = ["sessions", "list", "--json"];
   if (status !== "all") {
@@ -81,9 +88,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isManagerEnvelopeShape(
-  value: unknown,
-): value is Record<string, unknown> {
+function isManagerEnvelopeShape(value: unknown): value is ManagerEnvelopeShape {
   if (!isRecord(value)) {
     return false;
   }
